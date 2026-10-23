@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0d6b57">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Resibo">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>Resibo Encoder</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1277,6 +1285,39 @@ $('#cfgSave').onclick=function(){
 window.addEventListener('online',setStatus);window.addEventListener('offline',setStatus);
 loadCfg();init();
 })();
+})();
+</script>
+<script>
+/* ---------- installable app: service worker + install button ---------- */
+(function(){
+  if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
+    window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});
+  }
+  var standalone=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
+  if(standalone)return;
+  var deferred=null,btn=null;
+  function mk(label,onclick){
+    if(btn)return;
+    btn=document.createElement('button');
+    btn.type='button';btn.className='btn primary';btn.textContent=label;
+    btn.style.cssText='position:fixed;right:16px;bottom:max(16px,env(safe-area-inset-bottom,0px));z-index:70;box-shadow:0 2px 10px rgba(0,0,0,.25)';
+    btn.onclick=onclick;document.body.appendChild(btn);
+  }
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault();deferred=e;
+    mk('Install app',function(){
+      if(!deferred)return;deferred.prompt();
+      deferred.userChoice.then(function(){deferred=null;if(btn){btn.remove();btn=null}});
+    });
+  });
+  window.addEventListener('appinstalled',function(){if(btn){btn.remove();btn=null}});
+  /* iPhone and iPad have no install prompt: show the two taps instead. */
+  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(ios){
+    mk('Install app',function(){
+      alert('To install on iPhone or iPad:\n1. Open this page in Safari.\n2. Tap the Share button.\n3. Tap "Add to Home Screen".');
+    });
+  }
 })();
 </script>
 </body>
