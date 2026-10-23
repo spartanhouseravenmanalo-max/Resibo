@@ -139,6 +139,18 @@ tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
 .chip.err{background:var(--err-soft);color:var(--err)}
 .empty{padding:28px 12px;text-align:center;color:var(--muted)}
 
+/* sync */
+.syncbar{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:14px}
+.syncbar .st{display:flex;align-items:center;gap:8px;flex:1 1 240px;min-width:0}
+.syncbar .led{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.syncbar .led.on{background:var(--ok)}.syncbar .led.busy{background:var(--warn)}.syncbar .led.bad{background:var(--err)}
+.syncbar .err{color:var(--err);flex:1 1 100%;font-size:13.5px}
+.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.steps code,.panel code{font-family:var(--f-mono);font-size:12.5px;background:var(--surface2);border:1px solid var(--line);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre.rules{white-space:pre-wrap;font:12px/1.45 var(--f-mono);background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:10px;margin:6px 0 0;overflow:auto}
+textarea{font:13px/1.4 var(--f-mono);min-height:110px;resize:vertical}
+table .by{display:none}table.master .by{display:table-cell}
+.master-note{background:var(--accent-soft);color:var(--ink);border:1px solid var(--accent);border-radius:8px;padding:8px 12px;font-size:14px}
 /* drawer */
 .sheet{position:fixed;inset:0;z-index:50;display:flex;justify-content:flex-end}
 .scrim{position:absolute;inset:0;background:var(--scrim)}
@@ -187,6 +199,8 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
     <span class="tag">Receipt encoder for BIR VAT and income tax returns</span>
   </header>
 
+  <div class="syncbar" id="syncbar"></div>
+
   <section class="capture" aria-label="Add receipts">
     <div class="drop" id="drop">
       <div class="drop-copy">
@@ -211,6 +225,7 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
         <label class="f">Quarter
           <select id="fQ"><option value="">All quarters</option><option value="1">Q1 (Jan-Mar)</option><option value="2">Q2 (Apr-Jun)</option><option value="3">Q3 (Jul-Sep)</option><option value="4">Q4 (Oct-Dec)</option></select>
         </label>
+        <label class="f" id="byWrap" hidden>Account<select id="fBy"><option value="">All accounts</option></select></label>
         <label class="f search">Search<input id="fSearch" type="search" placeholder="Supplier, TIN or invoice no."></label>
       </div>
       <div class="bar-actions">
@@ -232,9 +247,9 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
     <div class="notices" id="notices"></div>
 
     <div class="tablewrap">
-      <table>
+      <table id="tbl">
         <thead><tr>
-          <th>Date</th><th>Supplier</th><th>Invoice no.</th><th class="num">Gross paid</th><th class="num">VAT</th><th>Expense category</th><th>Status</th><th></th>
+          <th>Date</th><th class="by">Encoded by</th><th>Supplier</th><th>Invoice no.</th><th class="num">Gross paid</th><th class="num">VAT</th><th>Expense category</th><th>Status</th><th></th>
         </tr></thead>
         <tbody id="tbody"></tbody>
         <tfoot id="tfoot"></tfoot>
@@ -326,6 +341,44 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
     </footer>
   </aside>
 </div>
+<div class="sheet" id="syncSheet" hidden>
+  <div class="scrim" id="syncScrim"></div>
+  <aside class="panel" role="dialog" aria-modal="true" aria-label="Set up sync">
+    <header><h2>Set up sync</h2><button class="icon" id="syncClose" type="button" aria-label="Close">&times;</button></header>
+    <div class="panel-body">
+      <p class="muted" style="margin:0">One-time setup, about 10 minutes and free. Your receipts are stored in your own Firebase project under your Google account. Only you can read them.</p>
+      <ol class="steps">
+        <li>Go to <code>console.firebase.google.com</code> and click <b>Add project</b>. Name it <code>resibo</code>. You can turn Google Analytics off.</li>
+        <li>Open <b>Build, then Authentication</b>, click <b>Get started</b>, choose <b>Google</b>, switch it <b>Enable</b>, pick your email as the support email and <b>Save</b>.</li>
+        <li>In <b>Authentication, then Settings, then Authorized domains</b>, click <b>Add domain</b> and enter <code id="hostName"></code></li>
+        <li>Open <b>Build, then Firestore Database</b>, click <b>Create database</b>, choose a nearby location (Singapore is closest) and <b>Production mode</b>. Then open the <b>Rules</b> tab, replace everything with the rules below, and click <b>Publish</b>.
+          <pre class="rules" id="rulesText">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /{path=**}/receipts/{id} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'MASTER-EMAIL@gmail.com';
+    }
+  }
+}</pre>
+          <p class="muted" style="margin:6px 0 0;font-size:13px">Replace <code>MASTER-EMAIL@gmail.com</code> with the Gmail address of your master account, in lowercase. Only that account can see and edit everyone's receipts. Other accounts only see and change their own.</p><button class="btn sm" id="copyRules" type="button" style="margin-top:6px">Copy rules</button></li>
+        <li>Click the gear icon, then <b>Project settings</b>. Under <b>Your apps</b> click the web icon <b>&lt;/&gt;</b>, name it <code>resibo</code>, and register it. Copy the <code>firebaseConfig</code> block it shows.</li>
+        <li>Paste that block here and save:</li>
+      </ol>
+      <label class="f">Paste the firebaseConfig block<textarea id="cfgText" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", appId: "..." };'></textarea></label>
+      <p id="cfgMsg" class="note" hidden></p>
+      <div id="linkBox" hidden>
+        <label class="f">Setup link for your other devices<span class="hint">Open this link once on each phone or laptop. It copies the setup there, so you only do the steps above one time. The link holds no receipts and no password.</span><input id="cfgLink" readonly></label>
+        <button class="btn sm" id="copyLink" type="button" style="margin-top:6px;width:fit-content">Copy link</button>
+      </div>
+    </div>
+    <footer><span class="grow"></span><button class="btn" id="syncCancel" type="button">Close</button><button class="btn primary" id="cfgSave" type="button">Save setup</button></footer>
+  </aside>
+</div>
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script>
@@ -338,6 +391,8 @@ var DOCTYPES=['Sales Invoice','Official Receipt','Cash Invoice','Other'];
 var PTYPES=['goods','services','capital'];
 var state={receipts:[],settings:{name:'',tin:''}};
 var imgs={};
+var masterOn=false,masterRows=[];
+function srcRows(){return masterOn?masterRows:state.receipts}
 var storageOK=true;
 var draft=null,isNew=false,lastFocus=null,delArmed=false;
 var queue=[],busy=false,qid=0;
@@ -416,6 +471,7 @@ function fromScan(j){
 /* ---------- storage ---------- */
 function persist(){
   try{localStorage.setItem(LS_KEY,JSON.stringify(state));storageOK=true}catch(e){storageOK=false}
+  if(window.__rsbPush)window.__rsbPush();
 }
 function load(){
   var raw=null;
@@ -435,7 +491,9 @@ function load(){
 /* ---------- filters ---------- */
 function periodRows(){
   var y=$('#fYear').value,q=$('#fQ').value;
-  return state.receipts.filter(function(r){
+  var by=$('#fBy').value;
+  return srcRows().filter(function(r){
+    if(masterOn&&by&&r.by!==by)return false;
     if(!y&&!q)return true;
     if(!validDate(r.date))return false;
     if(y&&r.date.slice(0,4)!==y)return false;
@@ -461,7 +519,7 @@ function periodLabel(){
 /* ---------- render ---------- */
 function renderYears(){
   var sel=$('#fYear'),cur=sel.value,ys={};
-  state.receipts.forEach(function(r){if(validDate(r.date))ys[r.date.slice(0,4)]=1});
+  srcRows().forEach(function(r){if(validDate(r.date))ys[r.date.slice(0,4)]=1});
   var list=Object.keys(ys).sort().reverse();
   sel.innerHTML='<option value="">All years</option>'+list.map(function(y){return '<option value="'+y+'">'+y+'</option>'}).join('');
   sel.value=list.indexOf(cur)>=0?cur:'';
@@ -479,6 +537,7 @@ function renderStats(){
 }
 function renderNotices(){
   var n=[];
+  if(masterOn){$('#notices').innerHTML='<div class="master-note">Viewing receipts from all accounts. Open any row to edit or delete it. Your changes are saved to that account list. Export Excel includes everyone shown below.</div>';return}
   var rev=periodRows().filter(function(r){return !r.reviewed}).length;
   if(rev)n.push('<div class="note">'+rev+' receipt'+(rev>1?'s':'')+' still need your check. Open each one, correct anything wrong, then save. Unchecked rows export with Reviewed: No.</div>');
   if(state.receipts.some(function(r){return r.source==='example'}))n.push('<div class="note"><span>The 2024 receipt below is an example from the photo you shared. Delete it before you export.</span><button class="btn sm" id="delExample" type="button">Delete example</button></div>');
@@ -497,8 +556,8 @@ function renderTable(){
   var rows=viewRows();
   $('#tbody').innerHTML=rows.map(function(r){
     var vatNote=num(r.vatAmount)>0?'<div class="sub" style="font-family:var(--f-body)">'+(r.claimVat?'claimed':'not claimed')+'</div>':'';
-    return '<tr data-id="'+esc(r.id)+'" class="'+(r.reviewed?'':'is-review')+'">'+
-      '<td class="mono">'+esc(r.date||'No date')+'</td>'+
+    return '<tr data-id="'+esc(r._path||r.id)+'" class="'+(r.reviewed?'':'is-review')+'">'+
+      '<td class="mono">'+esc(r.date||'No date')+'</td>'+'<td class="by sub">'+esc(r.by||'')+'</td>'+
       '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
       '<td class="mono">'+esc(r.invoiceNo||'-')+'</td>'+
       '<td class="num">'+fmt(total(r))+'</td>'+
@@ -508,7 +567,7 @@ function renderTable(){
       '<td><button class="btn sm" type="button" data-edit>Edit</button></td></tr>';
   }).join('');
   var g=0,v=0,c=0;viewRows().forEach(function(r){g+=total(r);v+=num(r.vatAmount);c+=claimed(r)});
-  $('#tfoot').innerHTML=rows.length?'<tr><td colspan="3">Total shown</td><td class="num">'+fmt(g)+'</td><td class="num">'+fmt(v)+'</td><td colspan="3"></td></tr>':'';
+  $('#tfoot').innerHTML=rows.length?'<tr><td colspan="4">Total shown</td><td class="num">'+fmt(g)+'</td><td class="num">'+fmt(v)+'</td><td colspan="3"></td></tr>':'';
   $('#empty').hidden=rows.length>0;
 }
 function renderQueue(){
@@ -521,7 +580,7 @@ function renderQueue(){
     return '<li class="qi '+it.status+'"><img src="'+it.url+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
   }).join('');
 }
-function render(){renderYears();renderStats();renderNotices();renderTable();renderQueue()}
+function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();renderStats();renderNotices();renderTable();renderQueue()}
 
 /* ---------- scanning (OCR runs in this browser) ---------- */
 var worker=null,workerPromise=null,engineFail='';
@@ -750,6 +809,7 @@ function errCopy(e){
   return 'Could not read this receipt. Try a flatter, sharper photo, or enter it manually.';
 }
 function addFiles(files){
+  if(masterOn){toast('Switch back to your own list to add receipts.');return}
   var list=Array.prototype.filter.call(files||[],function(f){return /^image\//.test(f.type)});
   if(!list.length){toast('Choose an image file.');return}
   list.forEach(function(f){queue.push({id:++qid,file:f,url:URL.createObjectURL(f),status:'wait',msg:'',rid:'',prog:''})});
@@ -797,7 +857,7 @@ function updateDerived(){
 function openSheet(id,opts){
   opts=opts||{};
   lastFocus=document.activeElement;
-  var ex=id?state.receipts.find(function(r){return r.id===id}):null;
+  var ex=id?srcRows().find(function(r){return (r._path||r.id)===id}):null;
   isNew=!ex;
   draft=ex?Object.assign({},ex):Object.assign(blank(),{id:uid(),source:'manual',reviewed:true});
   draft._vat=!!ex;
@@ -809,6 +869,7 @@ function openSheet(id,opts){
   $('#saveBtn').textContent=isNew?'Add receipt':'Save receipt';
   $('#delBtn').hidden=isNew;delArmed=false;$('#delBtn').textContent='Delete';
   fillForm();updateDerived();
+  if(masterOn&&ex){$('#sheetTitle').textContent='Edit receipt from '+(ex.by||'an account')}
   $('#sheet').hidden=false;document.body.style.overflow='hidden';
   setTimeout(function(){$('#f_date').focus({preventScroll:true})},30);
 }
@@ -835,6 +896,7 @@ $('#saveBtn').onclick=function(){
   var r=Object.assign({},draft);delete r._vat;
   r.supplier=r.supplier.trim();r.invoiceNo=r.invoiceNo.trim();r.tin=fmtTin(r.tin);
   r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
+  if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);closeSheet();toast('Saved to '+(r.by||'the account')+' list.');return}
   var i=state.receipts.findIndex(function(x){return x.id===r.id});
   if(i>=0)state.receipts[i]=r;else state.receipts.push(r);
   persist();closeSheet();render();toast(isNew?'Receipt added.':'Receipt saved.');
@@ -842,6 +904,7 @@ $('#saveBtn').onclick=function(){
 $('#delBtn').onclick=function(){
   if(!draft)return;
   if(!delArmed){delArmed=true;$('#delBtn').textContent='Confirm delete';return}
+  if(masterOn&&window.__rsbMasterDelete){window.__rsbMasterDelete(draft._path);closeSheet();toast('Receipt deleted.');return}
   var id=draft.id;state.receipts=state.receipts.filter(function(r){return r.id!==id});
   persist();closeSheet();render();toast('Receipt deleted.');
 };
@@ -854,6 +917,7 @@ $('#cam').onchange=function(e){addFiles(e.target.files);e.target.value=''};
 var camStream=null;
 function stopCam(){if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}$('#camSheet').hidden=true;document.body.style.overflow=''}
 $('#camBtn').onclick=async function(){
+  if(masterOn){toast('Switch back to your own list to add receipts.');return}
   var md=navigator.mediaDevices;
   if(!md||!md.getUserMedia){$('#cam').click();return}
   try{
@@ -880,7 +944,7 @@ $('#camShot').onclick=function(){
 $('#camApp').onclick=function(){stopCam();$('#cam').click()};
 $('#camCancel').onclick=stopCam;$('#camClose').onclick=stopCam;$('#camScrim').onclick=stopCam;
 $('#up').onchange=function(e){addFiles(e.target.files);e.target.value=''};
-$('#manualBtn').onclick=function(){openSheet(null)};
+$('#manualBtn').onclick=function(){if(masterOn){toast('Switch back to your own list to add receipts.');return}openSheet(null)};
 var drop=$('#drop');
 ['dragenter','dragover'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('over')})});
 ['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('over')})});
@@ -899,6 +963,7 @@ $('#tbody').addEventListener('click',function(e){
 });
 ['#fYear','#fQ'].forEach(function(s){$(s).addEventListener('change',function(){renderStats();renderNotices();renderTable()})});
 $('#fSearch').addEventListener('input',renderTable);
+$('#fBy').addEventListener('change',function(){renderStats();renderTable()});
 $('#tpName').addEventListener('input',function(e){state.settings.name=e.target.value;persist()});
 $('#tpTin').addEventListener('input',function(e){state.settings.tin=e.target.value;persist()});
 $('#tpTin').addEventListener('change',function(e){state.settings.tin=fmtTin(e.target.value);e.target.value=state.settings.tin;persist()});
@@ -945,20 +1010,20 @@ function buildWorkbook(rows){
   var sorted=rows.slice().sort(function(a,b){return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0});
 
   /* VAT: SLSP purchases */
-  var h1=['Taxable month','Supplier TIN','Supplier name','Address','Invoice no.','Gross purchase','Exempt purchase','Zero-rated purchase','Taxable purchase (net of VAT)','Services','Capital goods','Goods other than capital goods','Input VAT claimed','Input VAT not claimed','Reviewed'];
+  var h1=['Taxable month','Supplier TIN','Supplier name','Address','Invoice no.','Gross purchase','Exempt purchase','Zero-rated purchase','Taxable purchase (net of VAT)','Services','Capital goods','Goods other than capital goods','Input VAT claimed','Input VAT not claimed','Reviewed','Encoded by'];
   var a1=[[C('SUMMARY LIST OF PURCHASES (working copy for the BIR SLSP)')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],h1.map(C)];
   var s1=a1.length+1;
   sorted.forEach(function(r){
     var net=netVatable(r),pt=r.purchaseType;
     a1.push([C(r.date?r.date.slice(0,7):''),C(r.tin),C(r.supplier),C(r.address),C(r.invoiceNo),N(total(r)),N(r.exempt),N(r.zeroRated),N(net),
-      N(pt==='services'?net:0),N(pt==='capital'?net:0),N(pt==='goods'?net:0),N(claimed(r)),N(num(r.vatAmount)-claimed(r)),C(r.reviewed?'Yes':'No')]);
+      N(pt==='services'?net:0),N(pt==='capital'?net:0),N(pt==='goods'?net:0),N(claimed(r)),N(num(r.vatAmount)-claimed(r)),C(r.reviewed?'Yes':'No'),C(r.by||'')]);
   });
   var e1=s1+sorted.length-1;
   var tr=[C('TOTAL'),C(''),C(''),C(''),C('')];
   for(var i=5;i<=13;i++){var sum=0;for(var k=0;k<sorted.length;k++){sum+=Number(a1[s1-1+k][i].v)||0}tr.push(N(sum,sorted.length?'SUM('+colL(i)+s1+':'+colL(i)+e1+')':null))}
   a1.push(tr);
   a1.push([]);a1.push([C('Check the column layout against the current BIR SLSP template before you upload. Receipts with no buyer details are kept in "Input VAT not claimed".')]);
-  XLSX.utils.book_append_sheet(wb,sheet(a1,[12,18,30,34,14,14,14,14,16,12,12,16,14,14,10]),'VAT - SLSP Purchases');
+  XLSX.utils.book_append_sheet(wb,sheet(a1,[12,18,30,34,14,14,14,14,16,12,12,16,14,14,10,28]),'VAT - SLSP Purchases');
 
   /* VAT: 2550Q input tax summary */
   var sums={goods:[0,0],services:[0,0],capital:[0,0]},ex=0,zr=0,unNet=0,unVat=0;
@@ -982,18 +1047,18 @@ function buildWorkbook(rows){
   XLSX.utils.book_append_sheet(wb,sheet(a2,[52,18,16]),'VAT - 2550Q Input Tax');
 
   /* ITR: ledger */
-  var h3=['Date','Quarter','Supplier','Supplier TIN','Invoice no.','What was bought','Expense category','Business purpose','Gross paid','Input VAT claimed','Deductible expense','Reviewed'];
+  var h3=['Date','Quarter','Supplier','Supplier TIN','Invoice no.','What was bought','Expense category','Business purpose','Gross paid','Input VAT claimed','Deductible expense','Reviewed','Encoded by'];
   var a3=[[C('EXPENSE LEDGER FOR THE INCOME TAX RETURN')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],h3.map(C)];
   var s3=a3.length+1;
   sorted.forEach(function(r){
     a3.push([C(r.date),C(validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):''),C(r.supplier),C(r.tin),C(r.invoiceNo),C(r.description),C(r.category),C(r.purpose),
-      N(total(r)),N(claimed(r)),N(deductible(r)),C(r.reviewed?'Yes':'No')]);
+      N(total(r)),N(claimed(r)),N(deductible(r)),C(r.reviewed?'Yes':'No'),C(r.by||'')]);
   });
   var e3=s3+sorted.length-1,t3=[C('TOTAL'),C(''),C(''),C(''),C(''),C(''),C(''),C('')];
   [8,9,10].forEach(function(i){var sum=0;for(var k=0;k<sorted.length;k++){sum+=Number(a3[s3-1+k][i].v)||0}t3.push(N(sum,sorted.length?'SUM('+colL(i)+s3+':'+colL(i)+e3+')':null))});
   a3.push(t3);
   a3.push([]);a3.push([C('Deductible expense excludes input VAT that you claim on the 2550Q. Keep the original receipts for audit.')]);
-  XLSX.utils.book_append_sheet(wb,sheet(a3,[12,10,30,18,14,30,28,30,14,14,16,10]),'ITR - Expense Ledger');
+  XLSX.utils.book_append_sheet(wb,sheet(a3,[12,10,30,18,14,30,28,30,14,14,16,10,28]),'ITR - Expense Ledger');
 
   /* ITR: by category and quarter */
   var keys={};
@@ -1026,6 +1091,192 @@ $('#exportBtn').onclick=function(){
 
 /* ---------- boot ---------- */
 load();syncSettings();render();
+
+/* ---------- cloud sync (Firebase, optional) ---------- */
+(function(){
+var FB_VER='10.12.2',CFG_KEY='resibo.fbcfg',IDS_KEY='resibo.syncedids';
+var cfg=null,fb=null,db=null,auth=null,user=null,unsub=null,unsubSet=null,ready=false,setReady=false,lastPushed={},lastSettings='',errMsg='',initTried=false;
+function validCfg(c){return !!(c&&c.apiKey&&c.authDomain&&c.projectId&&c.appId)}
+function parseCfg(t){var o={},m,re=/["']?(apiKey|authDomain|projectId|storageBucket|messagingSenderId|appId|measurementId)["']?\s*:\s*["']([^"']+)["']/g;while((m=re.exec(t)))o[m[1]]=m[2];return validCfg(o)?o:null}
+function loadCfg(){
+  try{var h=location.hash;if(h.indexOf('#cfg=')===0){var c=JSON.parse(atob(decodeURIComponent(h.slice(5))));if(validCfg(c))localStorage.setItem(CFG_KEY,JSON.stringify(c));history.replaceState(null,'',location.pathname+location.search)}}catch(e){}
+  try{var raw=localStorage.getItem(CFG_KEY);if(raw){var c2=JSON.parse(raw);if(validCfg(c2))cfg=c2}}catch(e){}
+}
+function loadScript(src){return new Promise(function(res,rej){var el=document.createElement('script');el.src=src;el.onload=res;el.onerror=function(){rej(new Error('load '+src))};document.head.appendChild(el)})}
+function loadFirebase(){
+  if(window.firebase&&window.firebase.apps)return Promise.resolve();
+  var base='https://www.gstatic.com/firebasejs/'+FB_VER+'/';
+  return ['firebase-app-compat.js','firebase-auth-compat.js','firebase-firestore-compat.js'].reduce(function(p,f){return p.then(function(){return loadScript(base+f)})},Promise.resolve());
+}
+function stable(o){return JSON.stringify(o,Object.keys(o).sort())}
+function cloudForm(r){var c=JSON.parse(JSON.stringify(r));delete c.ocrText;delete c._vat;delete c._path;if(!c.by&&user&&user.email)c.by=user.email;return c}
+function readIds(){try{return JSON.parse(localStorage.getItem(IDS_KEY)||'{}')||{}}catch(e){return {}}}
+function saveIds(){try{var o={};Object.keys(lastPushed).forEach(function(k){o[k]=1});localStorage.setItem(IDS_KEY,JSON.stringify(o))}catch(e){}}
+
+function authErr(e){
+  var c=e&&e.code;
+  if(c==='auth/unauthorized-domain')return 'Add '+location.hostname+' under Authentication, Settings, Authorized domains in Firebase, then try again.';
+  if(c==='auth/popup-blocked'||c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request'||c==='auth/operation-not-supported-in-this-environment')return 'The sign-in window was blocked or closed. Allow pop-ups for this page and try again. Open the page in Chrome or Safari, not inside a chat app.';
+  if(c==='auth/network-request-failed')return 'No connection. Check your internet and try again.';
+  return 'Sign-in failed'+(c?' ('+c+')':'')+'.';
+}
+function setStatus(){
+  var el=$('#syncbar'),h='',led='',msg='',btns='';
+  if(!cfg){led='';msg='Sync is off. Your receipts are only on this device.';btns='<button class="btn sm primary" id="sbSetup" type="button">Set up sync</button>'}
+  else if(!user){led='';msg='Sync is set up. Sign in to share receipts across your devices.';btns='<button class="btn sm primary" id="sbIn" type="button">Sign in with Google</button><button class="btn sm" id="sbSetup" type="button">Setup</button>'}
+  else if(!ready){led='busy';msg='Connecting to your cloud copy...'}
+  else{
+    var off=typeof navigator.onLine==='boolean'&&!navigator.onLine;
+    led=off?'busy':'on';msg=off?'Offline. Changes are saved here and will upload when you reconnect.':'Synced as '+esc(user.email||'your account');
+    btns=(masterOn?'<button class="btn sm primary" id="sbMine" type="button">Back to my list</button>':'<button class="btn sm" id="sbAll" type="button">All accounts</button>')+'<button class="btn sm" id="sbSetup" type="button">Setup link</button><button class="btn sm" id="sbOut" type="button">Sign out</button>';
+    if(masterOn)msg='Master view: all accounts, signed in as '+esc(user.email||'master');
+  }
+  h='<div class="st"><span class="led '+led+'"></span><span>'+msg+'</span></div><div class="row">'+btns+'</div>'+(errMsg?'<div class="err">'+esc(errMsg)+'</div>':'');
+  el.innerHTML=h;
+  var b;
+  if((b=$('#sbSetup')))b.onclick=openSetup;
+  if((b=$('#sbIn')))b.onclick=signIn;
+  if((b=$('#sbOut')))b.onclick=function(){exitMaster();if(auth)auth.signOut()};
+  if((b=$('#sbAll')))b.onclick=enterMaster;
+  if((b=$('#sbMine')))b.onclick=function(){exitMaster();render();setStatus()};
+}
+function signIn(){
+  errMsg='';setStatus();
+  if(!auth){errMsg='The sync service has not loaded yet. Check your internet and reload the page.';setStatus();return}
+  auth.signInWithPopup(new fb.auth.GoogleAuthProvider()).catch(function(e){errMsg=authErr(e);setStatus()});
+}
+async function init(){
+  if(!cfg||initTried){setStatus();return}
+  initTried=true;setStatus();
+  try{
+    await loadFirebase();
+    fb=window.firebase;if(!fb.apps.length)fb.initializeApp(cfg);
+    db=fb.firestore();try{var p=db.enablePersistence({synchronizeTabs:true});if(p&&p.catch)p.catch(function(){})}catch(e){}
+    auth=fb.auth();auth.onAuthStateChanged(onUser);
+  }catch(e){errMsg='The sync service could not load. Check your internet, and turn off any ad blocker for this page.';setStatus()}
+}
+var masterUnsub=null;
+function exitMaster(){if(masterUnsub){masterUnsub();masterUnsub=null}masterOn=false;masterRows=[];$('#fBy').value=''}
+function enterMaster(){
+  if(!db||masterUnsub)return;
+  var first=true;
+  masterUnsub=db.collectionGroup('receipts').onSnapshot(function(snap){
+    var rows=[],by={};
+    snap.forEach(function(d){var r=Object.assign(blank(),d.data());r._path=d.ref?d.ref.path:d.id;r.by=r.by||'unknown account';r.reviewed=r.reviewed!==false;rows.push(r);by[r.by]=1});
+    masterRows=rows;masterOn=true;
+    var sel=$('#fBy'),cur=sel.value,keys=Object.keys(by).sort();
+    sel.innerHTML='<option value="">All accounts ('+keys.length+')</option>'+keys.map(function(k){return '<option>'+esc(k)+'</option>'}).join('');
+    sel.value=keys.indexOf(cur)>=0?cur:'';
+    first=false;render();setStatus();
+  },function(e){
+    if(masterUnsub){masterUnsub();masterUnsub=null}masterOn=false;masterRows=[];
+    toast(e&&e.code==='permission-denied'?'This account is not allowed to see all accounts. Check the master email in your Firebase rules.':'Could not load all accounts.');
+    render();setStatus();
+  });
+}
+function stopListening(){if(unsub){unsub();unsub=null}if(unsubSet){unsubSet();unsubSet=null}exitMaster()}
+function onUser(u){
+  stopListening();user=u;ready=false;setReady=false;lastPushed={};errMsg='';
+  if(u)subscribe();
+  setStatus();
+}
+function dbErr(e){
+  var c=e&&e.code;
+  if(c==='permission-denied')return 'The cloud database refused access. Check that the Firestore rules from the setup steps are published.';
+  if(c==='unavailable')return 'Cannot reach the cloud right now. Changes are kept on this device.';
+  return 'Sync problem'+(c?' ('+c+')':'')+'.';
+}
+function subscribe(){
+  var base=db.collection('users').doc(user.uid);
+  unsub=base.collection('receipts').onSnapshot(applyCloud,function(e){errMsg=dbErr(e);setStatus()});
+  unsubSet=base.collection('meta').doc('settings').onSnapshot(function(d){
+    setReady=true;
+    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||''};lastSettings=JSON.stringify(state.settings);syncSettings()}
+    else lastSettings='';
+    persist();
+  },function(){});
+}
+function applyCloud(snap){
+  var cloud={};snap.forEach(function(d){var r=d.data();r.id=d.id;cloud[d.id]=r});
+  var known=ready?lastPushed:readIds();
+  var localById={};state.receipts.forEach(function(r){localById[r.id]=r});
+  var out=[];
+  Object.keys(cloud).forEach(function(id){
+    var item=Object.assign(blank(),cloud[id]);
+    if(localById[id]&&localById[id].ocrText)item.ocrText=localById[id].ocrText;
+    out.push(item);
+  });
+  state.receipts.forEach(function(r){
+    if(cloud[r.id])return;
+    if(r.source==='example'){out.push(r);return}
+    if(known[r.id]!==undefined)return;
+    out.push(r);
+  });
+  lastPushed={};
+  out.forEach(function(r){if(cloud[r.id])lastPushed[r.id]=stable(cloudForm(r))});
+  state.receipts=out;ready=true;errMsg='';saveIds();
+  persist();render();setStatus();
+}
+function pushDiff(){
+  if(!ready||!user||!db)return;
+  var ops=[],seen={};
+  state.receipts.forEach(function(r){
+    if(r.source==='example')return;
+    seen[r.id]=1;var d=cloudForm(r),j=stable(d);
+    if(lastPushed[r.id]!==j){lastPushed[r.id]=j;ops.push(['set',r.id,d])}
+  });
+  Object.keys(lastPushed).forEach(function(id){if(!seen[id]){delete lastPushed[id];ops.push(['del',id])}});
+  var base=db.collection('users').doc(user.uid);
+  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||''}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
+  if(!ops.length)return;
+  saveIds();
+  for(var i=0;i<ops.length;i+=400){
+    var b=db.batch();
+    ops.slice(i,i+400).forEach(function(o){var ref=base.collection('receipts').doc(o[1]);if(o[0]==='set')b.set(ref,o[2]);else b.delete(ref)});
+    b.commit().catch(function(e){errMsg=dbErr(e);setStatus()});
+  }
+}
+window.__rsbPush=pushDiff;
+window.__rsbMasterSave=function(r){
+  if(!db||!user||!r._path)return;
+  var d=cloudForm(r);d.editedBy=user.email||'';d.editedAt=Date.now();
+  db.doc(r._path).set(d).catch(function(e){errMsg=dbErr(e);setStatus();toast('Could not save. Check the Firebase rules allow the master account to write.')});
+};
+window.__rsbMasterDelete=function(path){
+  if(!db||!path)return;
+  db.doc(path).delete().catch(function(e){errMsg=dbErr(e);setStatus();toast('Could not delete. Check the Firebase rules allow the master account to write.')});
+};
+
+/* setup dialog */
+function openSetup(){
+  $('#hostName').textContent=location.hostname||'your-site.github.io';
+  $('#cfgText').value='';$('#cfgMsg').hidden=true;
+  var lb=$('#linkBox');
+  if(cfg){lb.hidden=false;$('#cfgLink').value=location.origin+location.pathname+'#cfg='+encodeURIComponent(btoa(JSON.stringify(cfg)))}else lb.hidden=true;
+  $('#syncSheet').hidden=false;document.body.style.overflow='hidden';
+}
+function closeSetup(){$('#syncSheet').hidden=true;document.body.style.overflow=''}
+function copyText(t,okMsg,field){
+  var done=function(){toast(okMsg)};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){if(field){field.select();toast('Select and copy the text.')}})}
+  else if(field){field.select();toast('Select and copy the text.')}
+}
+$('#syncClose').onclick=closeSetup;$('#syncCancel').onclick=closeSetup;$('#syncScrim').onclick=closeSetup;
+$('#copyRules').onclick=function(){copyText($('#rulesText').textContent,'Rules copied.')};
+$('#copyLink').onclick=function(){copyText($('#cfgLink').value,'Link copied.',$('#cfgLink'))};
+$('#cfgLink').addEventListener('focus',function(){this.select()});
+$('#cfgSave').onclick=function(){
+  var t=$('#cfgText').value.trim(),m=$('#cfgMsg');
+  if(!t){if(cfg){closeSetup();return}m.textContent='Paste the firebaseConfig block first.';m.hidden=false;return}
+  var c=parseCfg(t);
+  if(!c){m.textContent='That does not look right. It must include apiKey, authDomain, projectId and appId.';m.hidden=false;return}
+  try{localStorage.setItem(CFG_KEY,JSON.stringify(c))}catch(e){}
+  m.textContent='Saved. Reloading to start sync...';m.hidden=false;
+  setTimeout(function(){location.reload()},600);
+};
+window.addEventListener('online',setStatus);window.addEventListener('offline',setStatus);
+loadCfg();init();
+})();
 })();
 </script>
 </body>
