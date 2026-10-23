@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Resibo Encoder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<style>
+/* Layout: one working column. Capture strip on top, receipt ledger below, edit drawer slides in from the right. */
+:root{
+  --bg:#eef1f3; --surface:#ffffff; --surface2:#f5f7f8; --ink:#14212b; --muted:#566774; --line:#d3dbe1;
+  --accent:#0d6b57; --accent-ink:#ffffff; --accent-soft:#dff1ec;
+  --warn:#8a5200; --warn-soft:#fbefd5; --err:#b3261e; --err-soft:#fbe4e1; --ok:#1b6e3a; --ok-soft:#dff3e6;
+  --scrim:rgba(14,21,25,.45);
+  --f-display:'Bricolage Grotesque',system-ui,sans-serif;
+  --f-body:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  --f-mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1519; --surface:#151e24; --surface2:#1b262d; --ink:#e4ecf1; --muted:#93a4b0; --line:#2a3943;
+    --accent:#4cc3a3; --accent-ink:#06241c; --accent-soft:#17342d;
+    --warn:#f0b24d; --warn-soft:#3a2d12; --err:#ff8a80; --err-soft:#3d1a18; --ok:#6fd18c; --ok-soft:#173424;
+    --scrim:rgba(0,0,0,.6); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1519; --surface:#151e24; --surface2:#1b262d; --ink:#e4ecf1; --muted:#93a4b0; --line:#2a3943;
+  --accent:#4cc3a3; --accent-ink:#06241c; --accent-soft:#17342d;
+  --warn:#f0b24d; --warn-soft:#3a2d12; --err:#ff8a80; --err-soft:#3d1a18; --ok:#6fd18c; --ok-soft:#173424;
+  --scrim:rgba(0,0,0,.6); color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+img{max-width:100%}
+html{color-scheme:light}
+html,body{min-height:100%}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--f-body); font-size:15px; line-height:1.5;
+  padding-block:20px 56px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:20px;min-width:0}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;line-height:1.15}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.muted{color:var(--muted)}
+
+/* top */
+.top{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.brand{font-size:30px;font-weight:700;letter-spacing:-.01em}
+.brand span{color:var(--accent)}
+.tag{color:var(--muted);font-size:14px}
+
+/* buttons + fields */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:40px;padding:8px 14px;border-radius:6px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);font:500 14px/1.2 var(--f-body);cursor:pointer;
+  text-decoration:none;white-space:nowrap;
+}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn.sm{min-height:32px;padding:4px 10px;font-size:13px}
+.btn[aria-disabled="true"],.btn:disabled{opacity:.5;cursor:not-allowed;pointer-events:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select,textarea{
+  font:400 15px/1.3 var(--f-body);color:var(--ink);background:var(--surface);
+  border:1px solid var(--line);border-radius:6px;padding:9px 10px;min-height:40px;width:100%;min-width:0;
+}
+input[type="checkbox"]{width:18px;height:18px;min-height:0;padding:0;accent-color:var(--accent)}
+input:focus,select:focus{border-color:var(--accent)}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:0}
+label.f>span.hint{font-size:12px}
+label.chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--ink);cursor:pointer}
+label.chk small{display:block;color:var(--muted);font-size:12.5px}
+
+/* capture */
+.capture{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.drop{display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+  border:1.5px dashed var(--line);border-radius:8px;padding:16px;background:var(--surface2)}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop h2{font-size:19px;margin-bottom:4px}
+.drop p{margin:0;color:var(--muted);max-width:56ch;font-size:14px}
+.drop-copy{min-width:0;flex:1 1 280px}
+.drop-actions{display:flex;gap:8px;flex-wrap:wrap}
+.note{margin:0;font-size:13.5px;color:var(--warn);background:var(--warn-soft);padding:8px 12px;border-radius:6px}
+.queue{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.qi{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:12px;align-items:center;
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface)}
+.qi img{width:48px;height:48px;object-fit:cover;border-radius:4px;background:var(--surface2)}
+.qi .qn{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qi .qs{font-size:13px;color:var(--muted)}
+.qi.fail .qs{color:var(--err)}
+.qi.done .qs{color:var(--ok)}
+.qa{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;
+  vertical-align:-2px;margin-right:6px;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.spin{animation:none;border-top-color:var(--line);background:var(--accent-soft)}}
+
+/* ledger */
+.ledger{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.bar{display:flex;gap:12px 18px;align-items:flex-end;flex-wrap:wrap;justify-content:space-between}
+.bar h2{font-size:22px;align-self:center}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;flex:1 1 320px}
+.filters label.f{flex:0 0 130px}
+.filters .search{flex:1 1 200px;min-width:160px}
+.bar-actions{display:flex;gap:8px;flex-wrap:wrap}
+details.tp{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--surface2)}
+details.tp summary{cursor:pointer;font-size:14px;color:var(--muted)}
+details.tp .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:10px}
+.stats{display:flex;flex-wrap:wrap;gap:8px 28px;padding:10px 0;border-block:1px solid var(--line)}
+.stats div{display:flex;flex-direction:column;min-width:0}
+.stats b{font:500 17px/1.3 var(--f-mono);font-variant-numeric:tabular-nums}
+.stats span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.notices{display:flex;flex-direction:column;gap:8px}
+.notices .note{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:14px}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;font-weight:500;
+  padding:10px 12px;background:var(--surface2);border-bottom:1px solid var(--line);white-space:nowrap}
+th.num{text-align:right;font-family:var(--f-body)}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--surface2)}
+tbody tr.is-review td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
+.sup{font-weight:500}
+.sub{font-size:12.5px;color:var(--muted)}
+.chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:500;white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.err{background:var(--err-soft);color:var(--err)}
+.empty{padding:28px 12px;text-align:center;color:var(--muted)}
+
+/* drawer */
+.sheet{position:fixed;inset:0;z-index:50;display:flex;justify-content:flex-end}
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.panel{position:relative;background:var(--surface);width:min(620px,100%);height:100%;display:flex;flex-direction:column;
+  border-left:1px solid var(--line)}
+.panel>header{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:14px max(16px,env(safe-area-inset-right,0px)) 14px 20px;padding-top:max(14px,env(safe-area-inset-top,0px));border-bottom:1px solid var(--line)}
+.panel>header h2{font-size:20px}
+.icon{background:none;border:0;font-size:26px;line-height:1;color:var(--muted);cursor:pointer;min-width:40px;min-height:40px;border-radius:6px}
+.icon:hover{color:var(--ink);background:var(--surface2)}
+.panel-body{flex:1;overflow-y:auto;padding:16px max(16px,env(safe-area-inset-right,0px)) 16px 20px;display:flex;flex-direction:column;gap:18px}
+.panel>footer{display:flex;gap:8px;align-items:center;padding:12px max(16px,env(safe-area-inset-right,0px)) max(12px,env(safe-area-inset-bottom,0px)) 20px;
+  border-top:1px solid var(--line);background:var(--surface)}
+.panel>footer .grow{flex:1}
+figure{margin:0;border:1px solid var(--line);border-radius:8px;background:var(--surface2);padding:8px;display:flex;flex-direction:column;gap:6px}
+figure img{max-width:100%;max-height:300px;object-fit:contain;align-self:center}
+figcaption{font-size:12px;color:var(--muted)}
+fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;min-width:0}
+legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em;color:var(--accent);padding:0 0 6px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.derived{background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.derived div{display:flex;flex-direction:column}
+.derived span{font-size:12px;color:var(--muted)}
+.derived b{font:500 16px var(--f-mono)}
+.flags{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.flags li{font-size:13.5px;padding:6px 10px;border-radius:6px}
+.flags li.warn{background:var(--warn-soft);color:var(--warn)}
+.flags li.err{background:var(--err-soft);color:var(--err)}
+.flags li.good{background:var(--ok-soft);color:var(--ok)}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:80;
+  background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px)}
+@media (max-width:560px){
+  .capture,.ledger{padding:14px}
+  .qi{grid-template-columns:40px minmax(0,1fr)}
+  .qi img{width:40px;height:40px}
+  .qa{grid-column:1 / -1;justify-content:flex-start}
+  .filters label.f{flex:1 1 120px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 class="brand">Resi<span>bo</span></h1>
+    <span class="tag">Receipt encoder for BIR VAT and income tax returns</span>
+  </header>
+
+  <section class="capture" aria-label="Add receipts">
+    <div class="drop" id="drop">
+      <div class="drop-copy">
+        <h2>Add receipts</h2>
+        <p>Take a photo or upload receipt images. The page reads the text on your device, fills in the TIN, invoice number, date and VAT, then you check each one before exporting. One receipt per photo, flat, in good light.</p>
+      </div>
+      <div class="drop-actions">
+        <button class="btn primary" id="camBtn" type="button">Take photo</button><input type="file" id="cam" accept="image/*" capture="environment" hidden>
+        <label class="btn" id="upLbl">Upload images<input type="file" id="up" accept="image/*" multiple hidden></label>
+        <button class="btn" id="manualBtn" type="button">Enter manually</button>
+      </div>
+    </div>
+    <p class="note" id="scanNote" hidden></p>
+    <ul class="queue" id="queue"></ul>
+  </section>
+
+  <section class="ledger" aria-label="Receipts">
+    <div class="bar">
+      <h2>Receipts</h2>
+      <div class="filters">
+        <label class="f">Year<select id="fYear"></select></label>
+        <label class="f">Quarter
+          <select id="fQ"><option value="">All quarters</option><option value="1">Q1 (Jan-Mar)</option><option value="2">Q2 (Apr-Jun)</option><option value="3">Q3 (Jul-Sep)</option><option value="4">Q4 (Oct-Dec)</option></select>
+        </label>
+        <label class="f search">Search<input id="fSearch" type="search" placeholder="Supplier, TIN or invoice no."></label>
+      </div>
+      <div class="bar-actions">
+        <button class="btn primary" id="exportBtn" type="button">Export Excel</button>
+        <button class="btn" id="backupBtn" type="button">Backup</button>
+        <label class="btn">Restore<input type="file" id="restore" accept=".json,application/json" hidden></label>
+      </div>
+    </div>
+
+    <details class="tp">
+      <summary>Taxpayer details for the Excel header (optional)</summary>
+      <div class="grid">
+        <label class="f">Registered name<input id="tpName" placeholder="Juan Dela Cruz / ABC Trading"></label>
+        <label class="f">Your TIN<input id="tpTin" placeholder="000-000-000-00000" inputmode="numeric"></label>
+      </div>
+    </details>
+
+    <div class="stats" id="stats"></div>
+    <div class="notices" id="notices"></div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Supplier</th><th>Invoice no.</th><th class="num">Gross paid</th><th class="num">VAT</th><th>Expense category</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+        <tfoot id="tfoot"></tfoot>
+      </table>
+      <div class="empty" id="empty" hidden>No receipts for this period. Add one above.</div>
+    </div>
+  </section>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="scrim" id="scrim"></div>
+  <aside class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <header><h2 id="sheetTitle">Receipt</h2><button class="icon" id="closeSheet" type="button" aria-label="Close">&times;</button></header>
+    <div class="panel-body">
+      <figure id="shot" hidden><img id="shotImg" alt="Receipt photo"><figcaption>This photo is only kept while the page is open.</figcaption></figure>
+      <ul class="flags" id="flags"></ul>
+      <details id="ocrBox" class="tp" hidden><summary>Text read from the photo</summary><pre id="ocrText" style="white-space:pre-wrap;font:12px/1.4 var(--f-mono);margin:8px 0 0;max-height:220px;overflow:auto"></pre></details>
+      <form id="form" autocomplete="off" onsubmit="return false">
+        <fieldset>
+          <legend>Receipt</legend>
+          <div class="row">
+            <label class="f">Date<input type="date" data-k="date" id="f_date"></label>
+            <label class="f">Document<select data-k="docType" id="f_docType"><option>Sales Invoice</option><option>Official Receipt</option><option>Cash Invoice</option><option>Other</option></select></label>
+            <label class="f">Invoice / OR no.<input data-k="invoiceNo" id="f_invoiceNo" placeholder="00049982"></label>
+          </div>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Supplier</legend>
+          <label class="f">Registered name<input data-k="supplier" id="f_supplier"></label>
+          <div class="row">
+            <label class="f">Supplier TIN<input data-k="tin" id="f_tin" placeholder="000-000-000-00000" inputmode="numeric"></label>
+            <label class="f">Registration<select data-k="supplierVat" id="f_supplierVat"><option value="VAT">VAT registered</option><option value="NON-VAT">Non-VAT</option></select></label>
+          </div>
+          <label class="f">Address<input data-k="address" id="f_address"></label>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Amounts (pesos, as paid)</legend>
+          <div class="row">
+            <label class="f">Vatable sales, VAT included<input type="number" step="0.01" min="0" inputmode="decimal" data-k="grossVatable" id="f_grossVatable" placeholder="0.00"></label>
+            <label class="f">VAT amount (12%)<input type="number" step="0.01" min="0" inputmode="decimal" data-k="vatAmount" id="f_vatAmount" placeholder="0.00"></label>
+            <label class="f">VAT-exempt sales<input type="number" step="0.01" min="0" inputmode="decimal" data-k="exempt" id="f_exempt" placeholder="0.00"></label>
+            <label class="f">Zero-rated sales<input type="number" step="0.01" min="0" inputmode="decimal" data-k="zeroRated" id="f_zeroRated" placeholder="0.00"></label>
+          </div>
+          <div class="derived">
+            <div><span>Total paid</span><b id="dTotal">0.00</b></div>
+            <div><span>Vatable, net of VAT</span><b id="dNet">0.00</b></div>
+            <div><span>Input VAT claimed</span><b id="dClaim">0.00</b></div>
+            <div><span>Deductible expense</span><b id="dDed">0.00</b></div>
+          </div>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>VAT claim</legend>
+          <label class="chk"><input type="checkbox" data-k="buyerShown" id="f_buyerShown"><span>The receipt shows my business name and TIN<small>Input VAT is normally claimed only on invoices made out to you. Confirm the rules with your accountant or RDO.</small></span></label>
+          <label class="chk"><input type="checkbox" data-k="claimVat" id="f_claimVat"><span>Claim the input VAT on this receipt<small>Adds it to your 2550Q input tax. If unchecked, the VAT stays part of the expense.</small></span></label>
+          <div class="row">
+            <label class="f">Purchase type<select data-k="purchaseType" id="f_purchaseType"><option value="goods">Goods (not capital goods)</option><option value="services">Services</option><option value="capital">Capital goods</option></select></label>
+          </div>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Income tax</legend>
+          <div class="row">
+            <label class="f">Expense category<select data-k="category" id="f_category"></select></label>
+          </div>
+          <label class="f">What was bought<input data-k="description" id="f_description" placeholder="Printer paper and ink"></label>
+          <label class="f">Business purpose<span class="hint">Keep this short. BIR may ask why the expense relates to the business.</span><input data-k="purpose" id="f_purpose"></label>
+        </fieldset>
+      </form>
+    </div>
+    <footer>
+      <button class="btn danger" id="delBtn" type="button">Delete</button>
+      <span class="grow"></span>
+      <button class="btn" id="cancelBtn" type="button">Cancel</button>
+      <button class="btn primary" id="saveBtn" type="button">Save receipt</button>
+    </footer>
+  </aside>
+</div>
+<div class="sheet" id="camSheet" hidden>
+  <div class="scrim" id="camScrim"></div>
+  <aside class="panel" style="width:min(640px,100%)" role="dialog" aria-modal="true" aria-label="Camera">
+    <header><h2>Take photo</h2><button class="icon" id="camClose" type="button" aria-label="Close">&times;</button></header>
+    <div class="panel-body" style="background:#000;padding:0;align-items:center;justify-content:center">
+      <video id="camVideo" playsinline autoplay muted style="width:100%;max-height:100%;object-fit:contain"></video>
+    </div>
+    <footer>
+      <button class="btn" id="camApp" type="button">Use camera app</button>
+      <span class="grow"></span>
+      <button class="btn" id="camCancel" type="button">Cancel</button>
+      <button class="btn primary" id="camShot" type="button">Capture</button>
+    </footer>
+  </aside>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function(){
+'use strict';
+var $=function(s){return document.querySelector(s)};
+var LS_KEY='resibo.v1';
+var CATS=['Cost of goods / purchases','Office & supplies','Rent','Utilities (electricity, water)','Communication (internet, mobile)','Transportation & travel','Fuel & oil','Representation & entertainment','Professional fees','Repairs & maintenance','Advertising & promotion','Taxes, licenses & fees','Miscellaneous'];
+var DOCTYPES=['Sales Invoice','Official Receipt','Cash Invoice','Other'];
+var PTYPES=['goods','services','capital'];
+var state={receipts:[],settings:{name:'',tin:''}};
+var imgs={};
+var storageOK=true;
+var draft=null,isNew=false,lastFocus=null,delArmed=false;
+var queue=[],busy=false,qid=0;
+
+
+/* ---------- helpers ---------- */
+function round2(n){return Math.round((Number(n)+Number.EPSILON)*100)/100}
+function num(v){if(v===null||v===undefined||v==='')return 0;var x=parseFloat(String(v).replace(/[^0-9.\-]/g,''));return isFinite(x)?x:0}
+function fmt(n){return Number(n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function str(v){return v==null?'':String(v).trim()}
+function uid(){return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function fmtTin(s){var d=String(s||'').replace(/\D/g,'');if(d.length<9)return String(s||'').trim();var rest=d.slice(9);return d.slice(0,3)+'-'+d.slice(3,6)+'-'+d.slice(6,9)+(rest?'-'+rest:'')}
+function validDate(d){return /^\d{4}-\d{2}-\d{2}$/.test(d||'')&&!isNaN(new Date(d+'T00:00:00'))}
+function qOf(d){return Math.ceil(Number(d.slice(5,7))/3)}
+function todayISO(){return new Date().toISOString().slice(0,10)}
+function toast(msg){var t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
+
+/* ---------- model ---------- */
+function blank(){return {id:'',date:'',supplier:'',tin:'',address:'',invoiceNo:'',docType:'Sales Invoice',supplierVat:'VAT',buyerShown:false,
+  grossVatable:0,vatAmount:0,exempt:0,zeroRated:0,printedTotal:0,description:'',category:'Miscellaneous',purchaseType:'goods',purpose:'',claimVat:false,
+  reviewed:false,source:'manual',added:Date.now()}}
+function total(r){return round2(num(r.grossVatable)+num(r.exempt)+num(r.zeroRated))}
+function netVatable(r){return round2(num(r.grossVatable)-num(r.vatAmount))}
+function claimed(r){return r.claimVat?round2(num(r.vatAmount)):0}
+function deductible(r){return round2(total(r)-claimed(r))}
+
+function flagsFor(r){
+  var f=[];
+  if(!validDate(r.date))f.push(['err','Date is missing or not valid.']);
+  if(!r.supplier)f.push(['warn','Supplier name is missing.']);
+  var digits=String(r.tin||'').replace(/\D/g,'').length;
+  if(digits<9)f.push(['err','Supplier TIN is missing or too short.']);
+  else if(digits<12&&r.supplierVat==='VAT')f.push(['warn','Supplier TIN has no branch code (VAT suppliers usually have 12 digits or more).']);
+  if(!r.invoiceNo)f.push(['warn','Invoice or OR number is missing.']);
+  if(r.printedTotal&&Math.abs(r.printedTotal-total(r))>0.05)f.push(['err','Amounts add up to '+fmt(total(r))+' but the receipt total read as '+fmt(r.printedTotal)+'.']);
+  if(num(r.grossVatable)>0&&Math.abs(num(r.vatAmount)-num(r.grossVatable)*12/112)>0.06)f.push(['warn','VAT is not 12/112 of the vatable amount ('+fmt(num(r.grossVatable)*12/112)+' expected).']);
+  if(r.supplierVat==='NON-VAT'&&(num(r.vatAmount)>0||num(r.grossVatable)>0))f.push(['warn','A non-VAT supplier should not charge VAT. Check the registration.']);
+  if(r.claimVat&&!r.buyerShown)f.push(['warn','Claiming input VAT, but the receipt shows no buyer name and TIN.']);
+  if(r.claimVat&&num(r.vatAmount)<=0)f.push(['warn','Claiming input VAT, but the VAT amount is zero.']);
+  var key=digits>=9?String(r.tin).replace(/\D/g,''):'';
+  if(key&&r.invoiceNo&&state.receipts.some(function(o){return o.id!==r.id&&String(o.tin).replace(/\D/g,'')===key&&o.invoiceNo===r.invoiceNo}))f.push(['warn','Possible duplicate: same supplier and invoice number already saved.']);
+  if(total(r)<=0)f.push(['err','Total amount is zero.']);
+  return f;
+}
+
+function fromScan(j){
+  var r=blank();r.source='scan';r.reviewed=false;
+  r.supplier=str(j.supplierName);r.tin=fmtTin(j.supplierTin);r.address=str(j.supplierAddress);r.invoiceNo=str(j.invoiceNo);
+  r.docType=DOCTYPES.indexOf(j.documentType)>=0?j.documentType:'Other';
+  r.date=validDate(str(j.date))?str(j.date):'';
+  var pv=num(j.printedVatableSales),pt=num(j.printedVatAmount),pe=num(j.printedExemptSales),pz=num(j.printedZeroRatedSales),tot=num(j.printedTotal);
+  var sv=j.supplierVatStatus;
+  r.supplierVat=(sv==='VAT'||sv==='NON-VAT')?sv:(pt>0?'VAT':'NON-VAT');
+  var gv=pv;
+  if(tot>0){
+    if(pt>0&&Math.abs(pv+pt+pe+pz-tot)<0.06)gv=pv+pt;
+    else if(Math.abs(pv+pe+pz-tot)<0.06)gv=pv;
+    else if(pv===0&&pe===0&&pz===0)gv=tot;
+  }
+  if(r.supplierVat==='NON-VAT'){
+    r.exempt=round2(tot||(pv+pe+pz));r.grossVatable=0;r.vatAmount=0;r.zeroRated=0;
+  }else{
+    r.grossVatable=round2(gv);r.exempt=round2(pe);r.zeroRated=round2(pz);
+    r.vatAmount=pt>0?round2(pt):(gv>0?round2(gv*12/112):0);
+  }
+  r.printedTotal=round2(tot);
+  r.buyerShown=!!(str(j.buyerName)||str(j.buyerTin));
+  r.claimVat=r.supplierVat==='VAT'&&r.vatAmount>0&&r.buyerShown;
+  r.description=str(j.description);
+  r.category=CATS.indexOf(j.suggestedCategory)>=0?j.suggestedCategory:'Miscellaneous';
+  r.purchaseType=PTYPES.indexOf(j.suggestedPurchaseType)>=0?j.suggestedPurchaseType:'goods';
+  return r;
+}
+
+/* ---------- storage ---------- */
+function persist(){
+  try{localStorage.setItem(LS_KEY,JSON.stringify(state));storageOK=true}catch(e){storageOK=false}
+}
+function load(){
+  var raw=null;
+  try{raw=localStorage.getItem(LS_KEY)}catch(e){storageOK=false}
+  if(raw){
+    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:''},s.settings||{});return}}catch(e){}
+  }
+  var ex=blank();
+  Object.assign(ex,{id:uid(),date:'2024-03-24',supplier:'Hard Discount Philippines, Inc.',tin:'748-940-479-00378',
+    address:'Blk 6 Lot 8 Greenwoods Ave, Greenwoods Exec Village, San Andres, Pob., Cainta, Rizal',invoiceNo:'00049982',docType:'Sales Invoice',
+    supplierVat:'VAT',buyerShown:false,grossVatable:433,vatAmount:46.39,exempt:72,zeroRated:0,printedTotal:505,
+    description:'Grocery: snacks, hashbrown, bread, brown sugar',category:'Miscellaneous',purchaseType:'goods',purpose:'',claimVat:false,reviewed:true,source:'example'});
+  state.receipts=[ex];
+  persist();
+}
+
+/* ---------- filters ---------- */
+function periodRows(){
+  var y=$('#fYear').value,q=$('#fQ').value;
+  return state.receipts.filter(function(r){
+    if(!y&&!q)return true;
+    if(!validDate(r.date))return false;
+    if(y&&r.date.slice(0,4)!==y)return false;
+    if(q&&String(qOf(r.date))!==q)return false;
+    return true;
+  });
+}
+function viewRows(){
+  var t=$('#fSearch').value.trim().toLowerCase();
+  var rows=periodRows();
+  if(t)rows=rows.filter(function(r){return (r.supplier+' '+r.tin+' '+r.invoiceNo+' '+r.description).toLowerCase().indexOf(t)>=0});
+  return rows.slice().sort(function(a,b){
+    var da=a.date||'9999',db=b.date||'9999';
+    if(da!==db)return da<db?1:-1;
+    return (b.added||0)-(a.added||0);
+  });
+}
+function periodLabel(){
+  var y=$('#fYear').value,q=$('#fQ').value;
+  return (y||'All years')+(q?' Q'+q:'');
+}
+
+/* ---------- render ---------- */
+function renderYears(){
+  var sel=$('#fYear'),cur=sel.value,ys={};
+  state.receipts.forEach(function(r){if(validDate(r.date))ys[r.date.slice(0,4)]=1});
+  var list=Object.keys(ys).sort().reverse();
+  sel.innerHTML='<option value="">All years</option>'+list.map(function(y){return '<option value="'+y+'">'+y+'</option>'}).join('');
+  sel.value=list.indexOf(cur)>=0?cur:'';
+}
+function renderStats(){
+  var rows=periodRows();
+  var g=0,v=0,c=0,d=0,rev=0;
+  rows.forEach(function(r){g+=total(r);v+=num(r.vatAmount);c+=claimed(r);d+=deductible(r);if(!r.reviewed)rev++});
+  $('#stats').innerHTML=
+    '<div><b>'+rows.length+'</b><span>Receipts, '+esc(periodLabel())+'</span></div>'+
+    '<div><b>'+fmt(g)+'</b><span>Gross paid</span></div>'+
+    '<div><b>'+fmt(c)+'</b><span>Input VAT claimed</span></div>'+
+    '<div><b>'+fmt(d)+'</b><span>Deductible expense</span></div>'+
+    '<div><b>'+rev+'</b><span>Need review</span></div>';
+}
+function renderNotices(){
+  var n=[];
+  var rev=periodRows().filter(function(r){return !r.reviewed}).length;
+  if(rev)n.push('<div class="note">'+rev+' receipt'+(rev>1?'s':'')+' still need your check. Open each one, correct anything wrong, then save. Unchecked rows export with Reviewed: No.</div>');
+  if(state.receipts.some(function(r){return r.source==='example'}))n.push('<div class="note"><span>The 2024 receipt below is an example from the photo you shared. Delete it before you export.</span><button class="btn sm" id="delExample" type="button">Delete example</button></div>');
+  if(!storageOK)n.push('<div class="note">This browser is not keeping saved data. Use Backup before you close the page.</div>');
+  $('#notices').innerHTML=n.join('');
+  var b=$('#delExample');if(b)b.onclick=function(){state.receipts=state.receipts.filter(function(r){return r.source!=='example'});persist();render();toast('Example deleted.')};
+}
+function statusChip(r){
+  if(!r.reviewed)return '<span class="chip warn">Needs review</span>';
+  var f=flagsFor(r);
+  if(!f.length)return '<span class="chip ok">Checked</span>';
+  var hasErr=f.some(function(x){return x[0]==='err'});
+  return '<span class="chip '+(hasErr?'err':'warn')+'">'+f.length+' issue'+(f.length>1?'s':'')+'</span>';
+}
+function renderTable(){
+  var rows=viewRows();
+  $('#tbody').innerHTML=rows.map(function(r){
+    var vatNote=num(r.vatAmount)>0?'<div class="sub" style="font-family:var(--f-body)">'+(r.claimVat?'claimed':'not claimed')+'</div>':'';
+    return '<tr data-id="'+esc(r.id)+'" class="'+(r.reviewed?'':'is-review')+'">'+
+      '<td class="mono">'+esc(r.date||'No date')+'</td>'+
+      '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
+      '<td class="mono">'+esc(r.invoiceNo||'-')+'</td>'+
+      '<td class="num">'+fmt(total(r))+'</td>'+
+      '<td class="num">'+(num(r.vatAmount)>0?fmt(r.vatAmount):'-')+vatNote+'</td>'+
+      '<td>'+esc(r.category)+'</td>'+
+      '<td>'+statusChip(r)+'</td>'+
+      '<td><button class="btn sm" type="button" data-edit>Edit</button></td></tr>';
+  }).join('');
+  var g=0,v=0,c=0;viewRows().forEach(function(r){g+=total(r);v+=num(r.vatAmount);c+=claimed(r)});
+  $('#tfoot').innerHTML=rows.length?'<tr><td colspan="3">Total shown</td><td class="num">'+fmt(g)+'</td><td class="num">'+fmt(v)+'</td><td colspan="3"></td></tr>':'';
+  $('#empty').hidden=rows.length>0;
+}
+function renderQueue(){
+  $('#queue').innerHTML=queue.map(function(it){
+    var s,a='';
+    if(it.status==='wait')s='Waiting';
+    else if(it.status==='read')s='<span class="spin"></span>'+esc(it.prog||'Reading the receipt');
+    else if(it.status==='done'){s='Filled in. Check it before you export.';a='<button class="btn sm primary" data-act="review" data-q="'+it.id+'" type="button">Review</button><button class="btn sm" data-act="dismiss" data-q="'+it.id+'" type="button">Dismiss</button>'}
+    else{s=esc(it.msg||'Could not read this receipt.');a='<button class="btn sm" data-act="retry" data-q="'+it.id+'" type="button">Try again</button><button class="btn sm" data-act="manual" data-q="'+it.id+'" type="button">Enter manually</button><button class="btn sm" data-act="dismiss" data-q="'+it.id+'" type="button">Remove</button>'}
+    return '<li class="qi '+it.status+'"><img src="'+it.url+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
+  }).join('');
+}
+function render(){renderYears();renderStats();renderNotices();renderTable();renderQueue()}
+
+/* ---------- scanning (OCR runs in this browser) ---------- */
+var worker=null,workerPromise=null,engineFail='';
+function setNote(t){var n=$('#scanNote');n.textContent=t||'';n.hidden=!t}
+function getWorker(onProg){
+  if(typeof Tesseract==='undefined'){return Promise.reject({code:'noengine'})}
+  if(!workerPromise){
+    workerPromise=Tesseract.createWorker('eng',1,{logger:function(m){if(m&&typeof m.progress==='number'&&getWorker.cb)getWorker.cb(m)}})
+      .then(function(w){worker=w;return w})
+      .catch(function(e){workerPromise=null;throw {code:'noengine',detail:e}});
+  }
+  getWorker.cb=onProg;
+  return workerPromise;
+}
+function loadBitmap(file){
+  if(window.createImageBitmap){return createImageBitmap(file,{imageOrientation:'from-image'}).catch(function(){return createImageBitmap(file)})}
+  return new Promise(function(res,rej){var im=new Image();im.onload=function(){res(im)};im.onerror=rej;im.src=URL.createObjectURL(file)});
+}
+async function prepCanvas(file,mode){
+  var bmp=await loadBitmap(file);
+  var w=bmp.width,h=bmp.height,sc=1;
+  if(w<1100)sc=2;else if(w>2200)sc=2200/w;
+  var cw=Math.round(w*sc),ch=Math.round(h*sc);
+  var cv=document.createElement('canvas');cv.width=cw;cv.height=ch;
+  var cx=cv.getContext('2d',{willReadFrequently:true});
+  cx.imageSmoothingQuality='high';cx.drawImage(bmp,0,0,cw,ch);
+  var img=cx.getImageData(0,0,cw,ch),d=img.data,n=cw*ch,g=new Uint8ClampedArray(n),i;
+  for(i=0;i<n;i++){g[i]=(d[i*4]*0.299+d[i*4+1]*0.587+d[i*4+2]*0.114)|0}
+  if(mode==='flat'){
+    /* estimate lighting with a heavily shrunk copy, then divide it out */
+    var sw=Math.max(8,Math.round(cw/16)),sh=Math.max(8,Math.round(ch/16));
+    var sm=document.createElement('canvas');sm.width=sw;sm.height=sh;
+    var sx=sm.getContext('2d',{willReadFrequently:true});var gi=cx.createImageData(cw,ch);
+    for(i=0;i<n;i++){gi.data[i*4]=gi.data[i*4+1]=gi.data[i*4+2]=g[i];gi.data[i*4+3]=255}
+    cx.putImageData(gi,0,0);sx.imageSmoothingQuality='high';sx.drawImage(cv,0,0,sw,sh);
+    cx.clearRect(0,0,cw,ch);cx.imageSmoothingQuality='high';cx.drawImage(sm,0,0,cw,ch);
+    var bg=cx.getImageData(0,0,cw,ch).data;
+    for(i=0;i<n;i++){var v=g[i]/(bg[i*4]+1)*205;g[i]=v>255?255:v}
+  }
+  var lo=255,hi=0,hist=new Uint32Array(256);for(i=0;i<n;i++)hist[g[i]]++;
+  var acc=0,p2=0,p98=255;for(i=0;i<256;i++){acc+=hist[i];if(!p2&&acc>n*0.02)p2=i;if(acc>n*0.98){p98=i;break}}
+  var rng=Math.max(1,p98-p2),out=cx.createImageData(cw,ch);
+  for(i=0;i<n;i++){var q=(g[i]-p2)/rng*255;q=q<0?0:q>255?255:q;out.data[i*4]=out.data[i*4+1]=out.data[i*4+2]=q;out.data[i*4+3]=255}
+  cx.putImageData(out,0,0);
+  if(bmp.close)try{bmp.close()}catch(e){}
+  return cv;
+}
+async function scanFile(file,progress){
+  var w=await getWorker(null);
+  var results=[],texts=[];
+  var passes=[['flat','6'],['flat','4'],['plain','6']];
+  for(var k=0;k<passes.length;k++){
+    progress('Reading text, pass '+(k+1)+' of '+passes.length,0);
+    getWorker.cb=function(m){progress('Reading text, pass '+(k+1)+' of '+passes.length,m.progress)};
+    var cv=await prepCanvas(file,passes[k][0]);
+    await w.setParameters({tessedit_pageseg_mode:passes[k][1],preserve_interword_spaces:'1'});
+    var r=await w.recognize(cv);
+    var t=(r&&r.data&&r.data.text)||'';texts.push(t);results.push(parseReceiptText(t));
+    var o=results[results.length-1];
+    if(o.supplierTin&&o.invoiceNo&&o.date&&o.printedTotal&&!o.notes.length&&k>=0)break;
+  }
+  var best=mergeParsed(results);
+  best._text=texts.join('\n\n----- next pass -----\n\n');
+  return best;
+}
+/* ---------- OCR text parser (Philippine receipts) ---------- */
+var KEYCATS=[
+  [/petron|shell|caltex|phoenix|seaoil|unioil|diesel|unleaded|gasoline|\bfuel\b|\bgas\b/i,'Fuel & oil'],
+  [/meralco|electric|\bwater\b|maynilad|manila water|\bkwh\b/i,'Utilities (electricity, water)'],
+  [/globe|\bsmart\b|pldt|converge|\bdito\b|internet|prepaid|\bload\b/i,'Communication (internet, mobile)'],
+  [/grab|angkas|taxi|\btoll\b|\bfare\b|airline|cebu pacific|\bbus\b|parking/i,'Transportation & travel'],
+  [/national book|office|\bpaper\b|\bink\b|toner|ballpen|folder|stationery|\bnbs\b/i,'Office & supplies'],
+  [/restaurant|jollibee|mcdonald|cafe|coffee|starbucks|\bmeal\b|resto|bakery|grill/i,'Representation & entertainment'],
+  [/hardware|plumbing|repair|electrical supply|paint/i,'Repairs & maintenance']
+];
+function ocrMoney(line){
+  var m,last=null,re=/(\d{1,3}(?:,\d{3})+|\d+)\s?[.,]\s?(\d{2})(?!\d)/g;
+  while((m=re.exec(line))){last=parseFloat(m[1].replace(/,/g,'')+'.'+m[2])}
+  if(last===null){var t=/(\d+)\s(\d{2})\s*[A-Za-z]?\s*$/.exec(line);if(t)last=parseFloat(t[1]+'.'+t[2])}
+  return last;
+}
+function ocrTin(line){
+  var s=line.replace(/[Oo]/g,'0').replace(/[lI|]/g,'1');
+  var m=/(\d{3})\D{0,2}(\d{3})\D{0,2}(\d{3})(?:\D{0,2}(\d{3,5}))?/.exec(s);
+  if(!m)return '';
+  return m[1]+'-'+m[2]+'-'+m[3]+(m[4]?'-'+m[4]:'');
+}
+function ocrDate(lines,repair){
+  var bestIdx=[],i;
+  for(i=0;i<lines.length;i++){
+    if(/date\s*issued|accred|valid|permit|expir/i.test(lines[i]))continue;
+    bestIdx.push(i);
+  }
+  bestIdx.sort(function(a,b){return (/date/i.test(lines[b])?1:0)-(/date/i.test(lines[a])?1:0)});
+  var MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  var nowY=new Date().getFullYear();
+  function ok(y,m,d){return y>=2015&&y<=nowY+1&&m>=1&&m<=12&&d>=1&&d<=31}
+  function iso(y,m,d){return y+'-'+('0'+m).slice(-2)+'-'+('0'+d).slice(-2)}
+  for(var k=0;k<bestIdx.length;k++){
+    var L=lines[bestIdx[k]];
+    var m=/(\d{4})\s?[.\/-]\s?(\d{1,2})\s?[.\/-]\s?(\d{1,2})(?!\d)/.exec(L);
+    if(m&&ok(+m[1],+m[2],+m[3]))return iso(+m[1],+m[2],+m[3]);
+    m=/(?:^|\D)(\d{1,2})\s?[.,\/-]\s?(\d{1,2})\s?[.,\/-]\s?(\d{4})(?!\d)/.exec(L);
+    if(m){var a=+m[1],b=+m[2],y=+m[3];
+      if(a<=12&&ok(y,a,b))return iso(y,a,b);
+      if(b<=12&&ok(y,b,a))return iso(y,b,a)}
+    m=/(?:^|\D)(\d{2})\s?[.,\/-]\s?(\d{1,2})\s?[.,\/-]\s?(\d{1,2})(?!\d)/.exec(L);
+    if(m){var p=+m[1],q=+m[2],r=+m[3];
+      if(p>=20&&p<=nowY-2000+1&&ok(2000+p,q,r))return iso(2000+p,q,r);
+      if(r>=20&&r<=nowY-2000+1){
+        if(p<=12&&ok(2000+r,p,q))return iso(2000+r,p,q);
+        if(q<=12&&ok(2000+r,q,p))return iso(2000+r,q,p)}}
+    m=/([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(L);
+    if(m&&MON[m[1].toLowerCase()]&&ok(+m[3],MON[m[1].toLowerCase()],+m[2]))return iso(+m[3],MON[m[1].toLowerCase()],+m[2]);
+  }
+  if(!repair){
+    var fixed=lines.map(function(x){return x.replace(/(^|\D)7(\d)(\s?[.,\/-]\s?\d{1,2}\s?[.,\/-]\s?\d{1,2})/,'$12$2$3')});
+    var d=ocrDate(fixed,true);if(d){ocrDate.fixed=true;return d}
+  }
+  return '';
+}
+function parseReceiptText(text){
+  var lines=String(text||'').split(/\r?\n/).map(function(s){return s.replace(/\s+/g,' ').trim()}).filter(Boolean);
+  var o={isReceipt:true,supplierName:'',supplierTin:'',supplierAddress:'',supplierVatStatus:'unknown',documentType:'Sales Invoice',invoiceNo:'',date:'',
+    buyerName:'',buyerTin:'',printedVatableSales:null,printedVatAmount:null,printedExemptSales:null,printedZeroRatedSales:null,printedTotal:null,
+    description:'',suggestedCategory:'Miscellaneous',suggestedPurchaseType:'goods',notes:[]};
+  var i,L,mo;
+  var tinIdx=-1;
+  for(i=0;i<lines.length;i++){
+    L=lines[i];
+    if(/accred|nixdorf|permit|\bptu\b/i.test(L)&&tinIdx>=0)break;
+    if(/\bT\s?[I1l]\s?N\b/i.test(L)){var t=ocrTin(L.replace(/^.*?\bT\s?[I1l]\s?N\b/i,''));if(t){o.supplierTin=t;tinIdx=i;
+      o.supplierVatStatus=/non[\s-]*vat/i.test(L)?'NON-VAT':(/vat/i.test(L)?'VAT':'unknown');break}}
+  }
+  if(o.supplierVatStatus==='unknown'){
+    var head=lines.slice(0,Math.max(tinIdx+2,8)).join(' ');
+    if(/non[\s-]*vat/i.test(head))o.supplierVatStatus='NON-VAT';else if(/vat\s*reg/i.test(head))o.supplierVatStatus='VAT';
+  }
+  var hi=tinIdx>=0?tinIdx:Math.min(lines.length,8);
+  var header=lines.slice(0,hi);
+  var nameRe=/\b(inc|corp|corporation|co|company|trading|enterprises?|opc|ltd|store|shop|mart|pharmacy|grocery|restaurant|cafe|bakery|services)\b/i;
+  var cand=header.filter(function(s){return nameRe.test(s)&&/[A-Za-z]{3,}/.test(s)});
+  var nameLine=cand.length?(cand.filter(function(s){return /\b(inc|corp|corporation|opc|ltd|co)\b\.?/i.test(s)})[0]||cand[0]):(header[0]||'');
+  o.supplierName=nameLine.replace(/^[^A-Za-z0-9]+/,'').replace(/[^A-Za-z0-9.)\]]+$/,'');
+  var addr=header.filter(function(s){return s!==nameLine&&(/\d/.test(s)&&/\b(blk|block|lot|st|street|ave|avenue|rd|road|brgy|barangay|city|village|bldg|unit|floor|fl|hwy|highway)\b/i.test(s)||/\b(city|rizal|cavite|laguna|manila|cebu|davao|bulacan|pampanga|quezon|makati|taguig|pasig)\b/i.test(s))});
+  o.supplierAddress=addr.join(', ');
+  var blob=lines.join('\n');
+  if(/official\s*receipt/i.test(blob)&&!/invoice/i.test(blob))o.documentType='Official Receipt';
+  else if(/cash\s*invoice/i.test(blob))o.documentType='Cash Invoice';
+  for(i=0;i<lines.length;i++){
+    L=lines[i];
+    mo=/(?:invoice|receipt|\bsi\b|\bor\b)\s*(?:no|num\w*|#)\.?\s*[:;#.\-]*\s*([0-9A-Za-z][0-9A-Za-z\-]{3,})/i.exec(L);
+    if(mo&&!/valid|accred|permit/i.test(L)){
+      var v=mo[1];if(/^[0-9OoIlDQ]{5,}$/.test(v)&&/\d{3}/.test(v))v=v.replace(/[OoDQ]/g,'0').replace(/[Il]/g,'1');
+      o.invoiceNo=v;break}
+  }
+  ocrDate.fixed=false;o.date=ocrDate(lines);if(o.date&&ocrDate.fixed)o.notes.push('The date looked misread (a 7 read for a 2). It was corrected to '+o.date+'. Check it against the receipt.');
+  for(i=0;i<lines.length;i++){
+    L=lines[i];var amt=ocrMoney(L);
+    if(/^\W*vat[\s-]*ex\w*\s*sales?|vat[\s-]*exempt/i.test(L)){if(amt!==null)o.printedExemptSales=amt;continue}
+    if(/zero[\s-]*rated/i.test(L)){if(amt!==null)o.printedZeroRatedSales=amt;continue}
+    if(/vatable\s*sales?|vat\s*sales/i.test(L)){if(amt!==null)o.printedVatableSales=amt;continue}
+    if(/vat\s*amount|output\s*vat|vat\s*\(?12|^\W*vat\W{0,3}\d/i.test(L)){if(amt!==null)o.printedVatAmount=amt;continue}
+    if(/^\W*(grand\s*)?total(\s*(due|amount|sales))?\b|amount\s*due|total\s*amount/i.test(L)&&!/total\s*discount/i.test(L)){
+      if(amt!==null&&o.printedTotal===null)o.printedTotal=amt}
+  }
+  for(i=0;i<lines.length;i++){
+    mo=/(sold\s*to|customer|buyer|business\s*name|registered\s*name)\s*[:;]\s*(.{3,})/i.exec(lines[i]);
+    if(mo&&!/nixdorf/i.test(lines[i])){o.buyerName=mo[2].replace(/[_\s]+$/,'');break}
+  }
+  var keyText=lines.join(' ');
+  for(i=0;i<KEYCATS.length;i++){if(KEYCATS[i][0].test(keyText)){o.suggestedCategory=KEYCATS[i][1];break}}
+  /* cross-check amounts */
+  var pv=o.printedVatableSales,pt=o.printedVatAmount,pe=o.printedExemptSales,pz=o.printedZeroRatedSales,tot=o.printedTotal;
+  function near(a,b){return Math.abs(a-b)<0.06}
+  if(pv!==null&&pv>0){
+    var expVat=Math.round(pv*12/112*100)/100;
+    if(pt===null){o.printedVatAmount=expVat;o.notes.push('VAT was not read. It was calculated as 12/112 of the vatable amount.')}
+    else if(!near(pt,expVat)){o.printedVatAmount=expVat;o.notes.push('Read VAT '+pt.toFixed(2)+' did not match 12/112 of the vatable amount. Using '+expVat.toFixed(2)+'.')}
+    if(tot!==null){
+      var rest=Math.round((tot-pv)*100)/100;
+      var zz=pz||0;
+      if(pe===null||!near(pe+zz,rest)){
+        if(rest>=0){
+          if(pe!==null&&!near(pe,rest-zz))o.notes.push('Read exempt amount '+pe.toFixed(2)+' did not fit the total. Using '+(rest-zz).toFixed(2)+'.');
+          o.printedExemptSales=Math.round((rest-zz)*100)/100;
+        }else{
+          o.notes.push('Vatable amount is larger than the total. Check the amounts.');
+        }
+      }
+    }
+  }else if(tot===null&&(pe!==null||pz!==null)){
+    o.printedTotal=(pe||0)+(pz||0);
+  }
+  if(tot===null&&pv!==null){o.printedTotal=Math.round((pv+(o.printedExemptSales||0)+(pz||0))*100)/100;o.notes.push('Total was not read. It was added up from the other amounts.')}
+  return o;
+}
+function mergeParsed(list){
+  function score(o){var s=0;if(o.supplierName)s++;if(o.supplierTin)s+=2;if(o.invoiceNo)s++;if(o.date)s+=2;
+    if(o.printedTotal)s+=2;if(o.printedVatableSales)s++;if(o.printedVatAmount)s++;if(o.notes.length===0)s++;return s}
+  var sorted=list.slice().sort(function(a,b){return score(b)-score(a)});
+  var base=sorted[0];
+  ['supplierName','supplierTin','supplierAddress','invoiceNo','date','buyerName'].forEach(function(k){
+    if(!base[k]){for(var i=1;i<sorted.length;i++){if(sorted[i][k]){base[k]=sorted[i][k];break}}}
+  });
+  if(base.supplierVatStatus==='unknown'){for(var i=1;i<sorted.length;i++){if(sorted[i].supplierVatStatus!=='unknown'){base.supplierVatStatus=sorted[i].supplierVatStatus;break}}}
+  /* a TIN with a branch code is better than one without */
+  sorted.forEach(function(o){if(o.supplierTin&&o.supplierTin.length>base.supplierTin.length&&o.supplierTin.indexOf(base.supplierTin)===0)base.supplierTin=o.supplierTin});
+  return base;
+}
+
+function lookupSupplier(r){
+  var key=String(r.tin||'').replace(/\D/g,'');if(key.length<9)return;
+  var m=state.receipts.filter(function(o){return o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
+  if(!m)return;
+  r.supplier=m.supplier;if(m.address)r.address=m.address;r.category=m.category;r.purchaseType=m.purchaseType;
+  if(m.description&&!r.description)r.description=m.description;
+  r.ocrNotes=(r.ocrNotes||[]).concat('Supplier name, address and category were filled from your earlier receipt with this TIN.');
+}
+function errCopy(e){
+  if(e&&e.code==='noengine'){
+    var d=e.detail&&(e.detail.message||String(e.detail));
+    var inFrame=false;try{inFrame=window.top!==window.self||location.protocol==='blob:'||location.protocol==='about:'}catch(x){inFrame=true}
+    return 'The text reader could not load'+(d?' ('+String(d).slice(0,80)+')':'')+'. '+(inFrame?'This looks like a preview window, which blocks it. Save the file and open it directly in Chrome, Edge or Firefox (double-click it). ':'It needs internet the first time, and an ad blocker or firewall can block cdnjs.cloudflare.com and cdn.jsdelivr.net. ')+'You can still enter this receipt manually.';
+  }
+  return 'Could not read this receipt. Try a flatter, sharper photo, or enter it manually.';
+}
+function addFiles(files){
+  var list=Array.prototype.filter.call(files||[],function(f){return /^image\//.test(f.type)});
+  if(!list.length){toast('Choose an image file.');return}
+  list.forEach(function(f){queue.push({id:++qid,file:f,url:URL.createObjectURL(f),status:'wait',msg:'',rid:'',prog:''})});
+  renderQueue();processQueue();
+}
+async function processQueue(){
+  if(busy)return;busy=true;
+  var it;
+  while((it=queue.find(function(x){return x.status==='wait'}))){
+    it.status='read';it.prog='Starting';renderQueue();
+    try{
+      var j=await scanFile(it.file,function(label,p){it.prog=label+(p?' ('+Math.round(p*100)+'%)':'');var el=document.querySelector('[data-qs="'+it.id+'"]');if(el)el.innerHTML='<span class="spin"></span>'+esc(it.prog)});
+      var r=fromScan(j);r.id=uid();r.ocrNotes=j.notes.slice();r.ocrText=String(j._text||'').slice(0,6000);
+      lookupSupplier(r);
+      imgs[r.id]=it.url;state.receipts.push(r);persist();it.status='done';it.rid=r.id;render();
+    }catch(e){
+      it.status='fail';it.msg=errCopy(e);
+      if(e&&e.code==='noengine'){queue.forEach(function(x){if(x.status==='wait'){x.status='fail';x.msg=it.msg}})}
+    }
+    renderQueue();
+  }
+  busy=false;
+}
+
+/* ---------- edit drawer ---------- */
+function fillForm(){
+  var els=document.querySelectorAll('#form [data-k]');
+  Array.prototype.forEach.call(els,function(el){
+    var k=el.dataset.k,v=draft[k];
+    if(el.type==='checkbox')el.checked=!!v;
+    else if(el.type==='number')el.value=num(v)?num(v):'';
+    else el.value=v==null?'':v;
+  });
+}
+function setField(k,v){var el=$('#f_'+k);if(!el)return;if(el.type==='number')el.value=num(v)?num(v):'';else el.value=v}
+function updateDerived(){
+  $('#dTotal').textContent=fmt(total(draft));
+  $('#dNet').textContent=fmt(netVatable(draft));
+  $('#dClaim').textContent=fmt(claimed(draft));
+  $('#dDed').textContent=fmt(deductible(draft));
+  var f=flagsFor(draft);
+  (draft.ocrNotes||[]).forEach(function(n){f.unshift(['warn',n])});
+  $('#flags').innerHTML=f.length?f.map(function(x){return '<li class="'+x[0]+'">'+esc(x[1])+'</li>'}).join(''):'<li class="good">Nothing to fix. The amounts and details are consistent.</li>';
+}
+function openSheet(id,opts){
+  opts=opts||{};
+  lastFocus=document.activeElement;
+  var ex=id?state.receipts.find(function(r){return r.id===id}):null;
+  isNew=!ex;
+  draft=ex?Object.assign({},ex):Object.assign(blank(),{id:uid(),source:'manual',reviewed:true});
+  draft._vat=!!ex;
+  var img=ex?imgs[id]:opts.img;
+  if(isNew&&opts.img)imgs[draft.id]=opts.img;
+  $('#shot').hidden=!img;if(img)$('#shotImg').src=img;
+  $('#ocrBox').hidden=!(ex&&ex.ocrText);$('#ocrText').textContent=(ex&&ex.ocrText)||'';
+  $('#sheetTitle').textContent=isNew?'New receipt':(ex.reviewed?'Edit receipt':'Check receipt');
+  $('#saveBtn').textContent=isNew?'Add receipt':'Save receipt';
+  $('#delBtn').hidden=isNew;delArmed=false;$('#delBtn').textContent='Delete';
+  fillForm();updateDerived();
+  $('#sheet').hidden=false;document.body.style.overflow='hidden';
+  setTimeout(function(){$('#f_date').focus({preventScroll:true})},30);
+}
+function closeSheet(){
+  $('#sheet').hidden=true;document.body.style.overflow='';draft=null;
+  if(lastFocus&&lastFocus.focus)try{lastFocus.focus()}catch(e){}
+}
+$('#form').addEventListener('input',function(e){
+  var t=e.target,k=t.dataset&&t.dataset.k;if(!k||!draft)return;
+  if(t.type==='checkbox')draft[k]=t.checked;
+  else if(t.type==='number')draft[k]=num(t.value);
+  else draft[k]=t.value;
+  if(k==='vatAmount')draft._vat=true;
+  if(k==='grossVatable'&&!draft._vat&&draft.supplierVat==='VAT'){draft.vatAmount=round2(num(draft.grossVatable)*12/112);setField('vatAmount',draft.vatAmount)}
+  if(k==='supplierVat'&&t.value==='NON-VAT'&&draft.claimVat){draft.claimVat=false;$('#f_claimVat').checked=false}
+  updateDerived();
+});
+$('#form').addEventListener('change',function(e){
+  var t=e.target;
+  if(t.dataset&&t.dataset.k==='tin'&&draft){draft.tin=fmtTin(t.value);t.value=draft.tin;updateDerived()}
+});
+$('#saveBtn').onclick=function(){
+  if(!draft)return;
+  var r=Object.assign({},draft);delete r._vat;
+  r.supplier=r.supplier.trim();r.invoiceNo=r.invoiceNo.trim();r.tin=fmtTin(r.tin);
+  r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
+  var i=state.receipts.findIndex(function(x){return x.id===r.id});
+  if(i>=0)state.receipts[i]=r;else state.receipts.push(r);
+  persist();closeSheet();render();toast(isNew?'Receipt added.':'Receipt saved.');
+};
+$('#delBtn').onclick=function(){
+  if(!draft)return;
+  if(!delArmed){delArmed=true;$('#delBtn').textContent='Confirm delete';return}
+  var id=draft.id;state.receipts=state.receipts.filter(function(r){return r.id!==id});
+  persist();closeSheet();render();toast('Receipt deleted.');
+};
+$('#cancelBtn').onclick=closeSheet;$('#closeSheet').onclick=closeSheet;$('#scrim').onclick=closeSheet;
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#sheet').hidden)closeSheet()}});
+
+/* ---------- events ---------- */
+$('#f_category').innerHTML=CATS.map(function(c){return '<option>'+esc(c)+'</option>'}).join('');
+$('#cam').onchange=function(e){addFiles(e.target.files);e.target.value=''};
+var camStream=null;
+function stopCam(){if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}$('#camSheet').hidden=true;document.body.style.overflow=''}
+$('#camBtn').onclick=async function(){
+  var md=navigator.mediaDevices;
+  if(!md||!md.getUserMedia){$('#cam').click();return}
+  try{
+    camStream=await md.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1920}},audio:false});
+    var v=$('#camVideo');v.srcObject=camStream;
+    $('#camSheet').hidden=false;document.body.style.overflow='hidden';
+    try{await v.play()}catch(e){}
+  }catch(e){
+    camStream=null;
+    toast('Live camera is not available here. Opening your camera app instead.');
+    $('#cam').click();
+  }
+};
+$('#camShot').onclick=function(){
+  var v=$('#camVideo');if(!camStream||!v.videoWidth){toast('The camera is not ready yet.');return}
+  var c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  c.toBlob(function(b){
+    if(!b){toast('Could not capture the photo.');return}
+    var f=new File([b],'receipt-'+Date.now()+'.jpg',{type:'image/jpeg'});
+    stopCam();addFiles([f]);
+  },'image/jpeg',0.92);
+};
+$('#camApp').onclick=function(){stopCam();$('#cam').click()};
+$('#camCancel').onclick=stopCam;$('#camClose').onclick=stopCam;$('#camScrim').onclick=stopCam;
+$('#up').onchange=function(e){addFiles(e.target.files);e.target.value=''};
+$('#manualBtn').onclick=function(){openSheet(null)};
+var drop=$('#drop');
+['dragenter','dragover'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('over')})});
+['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('over')})});
+drop.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files)addFiles(e.dataTransfer.files)});
+$('#queue').addEventListener('click',function(e){
+  var b=e.target.closest('button[data-act]');if(!b)return;
+  var it=queue.find(function(x){return x.id===Number(b.dataset.q)});if(!it)return;
+  var a=b.dataset.act;
+  if(a==='review')openSheet(it.rid);
+  else if(a==='dismiss'){queue=queue.filter(function(x){return x!==it});renderQueue()}
+  else if(a==='retry'){it.status='wait';renderQueue();processQueue()}
+  else if(a==='manual'){queue=queue.filter(function(x){return x!==it});renderQueue();openSheet(null,{img:it.url})}
+});
+$('#tbody').addEventListener('click',function(e){
+  var tr=e.target.closest('tr[data-id]');if(tr)openSheet(tr.dataset.id);
+});
+['#fYear','#fQ'].forEach(function(s){$(s).addEventListener('change',function(){renderStats();renderNotices();renderTable()})});
+$('#fSearch').addEventListener('input',renderTable);
+$('#tpName').addEventListener('input',function(e){state.settings.name=e.target.value;persist()});
+$('#tpTin').addEventListener('input',function(e){state.settings.tin=e.target.value;persist()});
+$('#tpTin').addEventListener('change',function(e){state.settings.tin=fmtTin(e.target.value);e.target.value=state.settings.tin;persist()});
+
+/* ---------- backup ---------- */
+function saveFile(name,data,type){
+  try{
+    var blob=new Blob([data],{type:type||'application/octet-stream'});
+    var url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=name;document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove()},1500);
+    toast('Saved '+name+' to your downloads.');
+  }catch(e){toast('Could not save the file.')}
+}
+$('#backupBtn').onclick=function(){
+  saveFile('resibo-backup-'+todayISO()+'.json',JSON.stringify({version:1,settings:state.settings,receipts:state.receipts.map(function(r){var c=Object.assign({},r);delete c.ocrText;return c})},null,2),'application/json');
+};
+$('#restore').onchange=function(e){
+  var f=e.target.files[0];e.target.value='';if(!f)return;
+  var fr=new FileReader();
+  fr.onload=function(){
+    try{
+      var s=JSON.parse(fr.result);if(!s||!Array.isArray(s.receipts))throw 0;
+      var map={};state.receipts.forEach(function(r){map[r.id]=r});
+      s.receipts.forEach(function(r){if(r&&r.id)map[r.id]=Object.assign(blank(),r)});
+      state.receipts=Object.keys(map).map(function(k){return map[k]});
+      if(s.settings)state.settings=Object.assign(state.settings,s.settings);
+      persist();syncSettings();render();toast('Restored '+s.receipts.length+' receipts.');
+    }catch(err){toast('That file is not a Resibo backup.')}
+  };
+  fr.readAsText(f);
+};
+function syncSettings(){$('#tpName').value=state.settings.name||'';$('#tpTin').value=state.settings.tin||''}
+
+/* ---------- Excel export ---------- */
+function C(v){return {t:'s',v:String(v==null?'':v)}}
+function N(v,f){var c={t:'n',v:round2(v),z:'#,##0.00'};if(f)c.f=f;return c}
+function sheet(aoa,widths){var ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=widths.map(function(w){return {wch:w}});return ws}
+function colL(i){return XLSX.utils.encode_col(i)}
+
+function buildWorkbook(rows){
+  var tp=state.settings,label=periodLabel();
+  var wb=XLSX.utils.book_new();
+  var sorted=rows.slice().sort(function(a,b){return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0});
+
+  /* VAT: SLSP purchases */
+  var h1=['Taxable month','Supplier TIN','Supplier name','Address','Invoice no.','Gross purchase','Exempt purchase','Zero-rated purchase','Taxable purchase (net of VAT)','Services','Capital goods','Goods other than capital goods','Input VAT claimed','Input VAT not claimed','Reviewed'];
+  var a1=[[C('SUMMARY LIST OF PURCHASES (working copy for the BIR SLSP)')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],h1.map(C)];
+  var s1=a1.length+1;
+  sorted.forEach(function(r){
+    var net=netVatable(r),pt=r.purchaseType;
+    a1.push([C(r.date?r.date.slice(0,7):''),C(r.tin),C(r.supplier),C(r.address),C(r.invoiceNo),N(total(r)),N(r.exempt),N(r.zeroRated),N(net),
+      N(pt==='services'?net:0),N(pt==='capital'?net:0),N(pt==='goods'?net:0),N(claimed(r)),N(num(r.vatAmount)-claimed(r)),C(r.reviewed?'Yes':'No')]);
+  });
+  var e1=s1+sorted.length-1;
+  var tr=[C('TOTAL'),C(''),C(''),C(''),C('')];
+  for(var i=5;i<=13;i++){var sum=0;for(var k=0;k<sorted.length;k++){sum+=Number(a1[s1-1+k][i].v)||0}tr.push(N(sum,sorted.length?'SUM('+colL(i)+s1+':'+colL(i)+e1+')':null))}
+  a1.push(tr);
+  a1.push([]);a1.push([C('Check the column layout against the current BIR SLSP template before you upload. Receipts with no buyer details are kept in "Input VAT not claimed".')]);
+  XLSX.utils.book_append_sheet(wb,sheet(a1,[12,18,30,34,14,14,14,14,16,12,12,16,14,14,10]),'VAT - SLSP Purchases');
+
+  /* VAT: 2550Q input tax summary */
+  var sums={goods:[0,0],services:[0,0],capital:[0,0]},ex=0,zr=0,unNet=0,unVat=0;
+  rows.forEach(function(r){
+    ex+=num(r.exempt);zr+=num(r.zeroRated);
+    if(r.claimVat){var s=sums[r.purchaseType]||sums.goods;s[0]+=netVatable(r);s[1]+=claimed(r)}
+    else{unNet+=netVatable(r);unVat+=num(r.vatAmount)}
+  });
+  var a2=[[C('2550Q INPUT TAX WORKSHEET')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],
+    [C('Item'),C('Net purchases'),C('Input VAT')],
+    [C('Domestic purchases of goods other than capital goods'),N(sums.goods[0]),N(sums.goods[1])],
+    [C('Domestic purchases of services'),N(sums.services[0]),N(sums.services[1])],
+    [C('Purchases of capital goods'),N(sums.capital[0]),N(sums.capital[1])],
+    [C('Total input VAT claimed'),N(sums.goods[0]+sums.services[0]+sums.capital[0],'SUM(B7:B9)'),N(sums.goods[1]+sums.services[1]+sums.capital[1],'SUM(C7:C9)')],
+    [],
+    [C('Exempt purchases, including non-VAT suppliers'),N(ex),C('')],
+    [C('Zero-rated purchases'),N(zr),C('')],
+    [C('Taxable purchases with no input VAT claimed'),N(unNet),N(unVat)],
+    [],
+    [C('Purchases side only. Sales and output tax are not tracked here. Match each line to your 2550Q version before you encode.')]];
+  XLSX.utils.book_append_sheet(wb,sheet(a2,[52,18,16]),'VAT - 2550Q Input Tax');
+
+  /* ITR: ledger */
+  var h3=['Date','Quarter','Supplier','Supplier TIN','Invoice no.','What was bought','Expense category','Business purpose','Gross paid','Input VAT claimed','Deductible expense','Reviewed'];
+  var a3=[[C('EXPENSE LEDGER FOR THE INCOME TAX RETURN')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],h3.map(C)];
+  var s3=a3.length+1;
+  sorted.forEach(function(r){
+    a3.push([C(r.date),C(validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):''),C(r.supplier),C(r.tin),C(r.invoiceNo),C(r.description),C(r.category),C(r.purpose),
+      N(total(r)),N(claimed(r)),N(deductible(r)),C(r.reviewed?'Yes':'No')]);
+  });
+  var e3=s3+sorted.length-1,t3=[C('TOTAL'),C(''),C(''),C(''),C(''),C(''),C(''),C('')];
+  [8,9,10].forEach(function(i){var sum=0;for(var k=0;k<sorted.length;k++){sum+=Number(a3[s3-1+k][i].v)||0}t3.push(N(sum,sorted.length?'SUM('+colL(i)+s3+':'+colL(i)+e3+')':null))});
+  a3.push(t3);
+  a3.push([]);a3.push([C('Deductible expense excludes input VAT that you claim on the 2550Q. Keep the original receipts for audit.')]);
+  XLSX.utils.book_append_sheet(wb,sheet(a3,[12,10,30,18,14,30,28,30,14,14,16,10]),'ITR - Expense Ledger');
+
+  /* ITR: by category and quarter */
+  var keys={};
+  rows.forEach(function(r){keys[validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date']=1});
+  var kl=Object.keys(keys).sort();
+  var a4=[[C('DEDUCTIBLE EXPENSES BY CATEGORY')],[C('Period'),C(label)],[],[C('Category')].concat(kl.map(C),[C('Total')])];
+  var s4=a4.length+1;
+  CATS.forEach(function(cat){
+    var vals=kl.map(function(k){var s=0;rows.forEach(function(r){var rk=validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date';if(r.category===cat&&rk===k)s+=deductible(r)});return s});
+    var tot=vals.reduce(function(a,b){return a+b},0);
+    if(tot===0)return;
+    var rowIdx=a4.length+1;
+    a4.push([C(cat)].concat(vals.map(function(v){return N(v)}),[N(tot,'SUM(B'+rowIdx+':'+colL(kl.length)+rowIdx+')')]));
+  });
+  var e4=a4.length,tr4=[C('TOTAL')];
+  for(var c=1;c<=kl.length+1;c++){var s=0;for(var r2=s4-1;r2<a4.length;r2++){s+=Number(a4[r2][c].v)||0}tr4.push(N(s,a4.length>=s4?'SUM('+colL(c)+s4+':'+colL(c)+e4+')':null))}
+  a4.push(tr4);
+  XLSX.utils.book_append_sheet(wb,sheet(a4,[34].concat(kl.map(function(){return 14}),[16])),'ITR - By Category');
+  return wb;
+}
+$('#exportBtn').onclick=function(){
+  var rows=periodRows();
+  if(!rows.length){toast('There are no receipts in this period to export.');return}
+  if(typeof XLSX==='undefined'){toast('The Excel library did not load. Check your connection and reload.');return}
+  var out;
+  try{out=XLSX.write(buildWorkbook(rows),{bookType:'xlsx',type:'array'})}catch(e){toast('Could not build the workbook.');return}
+  var y=$('#fYear').value||'all',q=$('#fQ').value;
+  saveFile('resibo-'+y+(q?'-Q'+q:'')+'-'+todayISO()+'.xlsx',out,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+};
+
+/* ---------- boot ---------- */
+load();syncSettings();render();
+})();
+</script>
+</body>
+</html>
