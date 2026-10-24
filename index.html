@@ -1041,7 +1041,10 @@ function stopCam(){setTimeout(syncPanelFlag,0);if(camStream){camStream.getTracks
 $('#camBtn').onclick=async function(){
   if(masterOn){toast('Switch back to your own list to add receipts.');return}
   var md=navigator.mediaDevices;
-  if(!md||!md.getUserMedia){$('#cam').click();return}
+  if(!md||!md.getUserMedia){
+    setNote(window.isSecureContext===false?'The camera needs a secure (https) address. Open the page from your https link, not a saved file.':'This browser does not offer a live camera. Opening your camera app instead. If it opens Photos, use Upload images and pick a photo you just took.');
+    $('#cam').click();return}
+  setNote('');
   try{
     camStream=await md.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1920}},audio:false});
     var v=$('#camVideo');v.srcObject=camStream;
@@ -1049,8 +1052,17 @@ $('#camBtn').onclick=async function(){
     try{await v.play()}catch(e){}
   }catch(e){
     camStream=null;
-    toast('Live camera is not available here. Opening your camera app instead.');
-    $('#cam').click();
+    var nm=(e&&e.name)||'';
+    if(nm==='NotAllowedError'||nm==='PermissionDeniedError'||nm==='SecurityError'){
+      setNote('Camera is blocked for this page. In Chrome tap the icon at the left of the address bar, then Permissions, then Camera, then Allow. Also check Android Settings, Apps, Chrome, Permissions, Camera. For the installed app use Settings, Apps, Resibo (or Chrome), Permissions, Camera. Then reload the page. Meanwhile you can use Upload images with a photo from your camera.');
+    }else if(nm==='NotFoundError'||nm==='OverconstrainedError'){
+      setNote('No camera was found on this device. Use Upload images with a photo from your gallery.');
+    }else if(nm==='NotReadableError'||nm==='AbortError'){
+      setNote('The camera is in use by another app. Close the other app, then try again.');
+    }else{
+      setNote('The live camera could not start'+(nm?' ('+nm+')':'')+'. Opening your camera app instead. If it opens Photos, use Upload images and pick a photo you just took.');
+      $('#cam').click();
+    }
   }
 };
 $('#camShot').onclick=function(){
