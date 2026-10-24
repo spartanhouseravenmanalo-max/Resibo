@@ -382,9 +382,11 @@ service cloud.firestore {
 }</pre>
           <p class="muted" style="margin:6px 0 0;font-size:13px">Replace <code>MASTER-EMAIL@gmail.com</code> with the Gmail address of your master account, in lowercase. Only that account can see and edit everyone's receipts. Other accounts only see and change their own.</p><button class="btn sm" id="copyRules" type="button" style="margin-top:6px">Copy rules</button></li>
         <li>Click the gear icon, then <b>Project settings</b>. Under <b>Your apps</b> click the web icon <b>&lt;/&gt;</b>, name it <code>resibo</code>, and register it. Copy the <code>firebaseConfig</code> block it shows.</li>
-        <li>Paste that block here and save:</li>
+        <li>Phone sign-in fix. In Firebase open <b>Authentication, Sign-in method, Google</b> and copy the <b>Web client ID</b> (under Web SDK configuration). Then open <code>console.cloud.google.com</code>, choose the same project, go to <b>APIs &amp; Services, then Credentials</b>, click <b>Web client (auto created by Google Service)</b>, and under <b>Authorized JavaScript origins</b> click <b>Add URI</b> and enter <code id="originName"></code> then <b>Save</b>. It can take a few minutes to apply.</li>
+        <li>Paste the config block and the Web client ID below, then save:</li>
       </ol>
       <label class="f">Paste the firebaseConfig block<textarea id="cfgText" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", appId: "..." };'></textarea></label>
+      <label class="f">Google Web client ID<span class="hint">Looks like 1234567890-abc123.apps.googleusercontent.com. Needed for Google sign-in on phones.</span><input id="cidText" placeholder="1234567890-abc123.apps.googleusercontent.com" autocomplete="off"></label>
       <p id="cfgMsg" class="note" hidden></p>
       <div id="linkBox" hidden>
         <label class="f">Setup link for your other devices<span class="hint">Open this link once on each phone or laptop. It copies the setup there, so you only do the steps above one time. The link holds no receipts and no password.</span><input id="cfgLink" readonly></label>
@@ -1253,13 +1255,14 @@ function authErr(e){
   var c=e&&e.code;
   if(c==='auth/unauthorized-domain')return 'Add '+location.hostname+' under Authentication, Settings, Authorized domains in Firebase, then try again.';
   if(c==='auth/popup-blocked'||c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request'||c==='auth/operation-not-supported-in-this-environment')return 'The sign-in window was blocked or closed. Allow pop-ups for this page and try again. Open the page in Chrome or Safari, not inside a chat app.';
+  if(c==='auth/invalid-credential'||c==='auth/operation-not-allowed')return 'Google sign-in was refused. Check that Google is enabled under Authentication, Sign-in method, and that the Web client ID is the one shown there.';
   if(c==='auth/network-request-failed')return 'No connection. Check your internet and try again.';
   return 'Sign-in failed'+(c?' ('+c+')':'')+'.';
 }
 function setStatus(){
   var el=$('#syncbar'),h='',led='',msg='',btns='';
   if(!cfg){led='';msg='Sync is off. Your receipts are only on this device.';btns='<button class="btn sm primary" id="sbSetup" type="button">Set up sync</button>'}
-  else if(!user){led='';msg='Sync is set up. Sign in to share receipts across your devices.';btns='<button class="btn sm primary" id="sbIn" type="button">Sign in with Google</button><button class="btn sm" id="sbSetup" type="button">Setup</button>'}
+  else if(!user){led='';msg='Sync is set up. Sign in to share receipts across your devices.';btns=(cfg.clientId?'<span id="gsiBtn">'+(gsiReady?'':'<span class="muted">Loading Google sign-in...</span>')+'</span>':'<button class="btn sm primary" id="sbIn" type="button">Sign in with Google</button>')+'<button class="btn sm" id="sbSetup" type="button">Setup</button>'}
   else if(!ready){led='busy';msg='Connecting to your cloud copy...'}
   else{
     var off=typeof navigator.onLine==='boolean'&&!navigator.onLine;
@@ -1270,11 +1273,31 @@ function setStatus(){
   h='<div class="st"><span class="led '+led+'"></span><span>'+msg+'</span></div><div class="row">'+btns+'</div>'+(errMsg?'<div class="err">'+esc(errMsg)+'</div>':'');
   el.innerHTML=h;
   var b;
+  renderGsiButton();
   if((b=$('#sbSetup')))b.onclick=openSetup;
   if((b=$('#sbIn')))b.onclick=signIn;
-  if((b=$('#sbOut')))b.onclick=function(){exitMaster();if(auth)auth.signOut()};
+  if((b=$('#sbOut')))b.onclick=function(){exitMaster();if(auth)auth.signOut();try{google.accounts.id.disableAutoSelect()}catch(e){}};
   if((b=$('#sbAll')))b.onclick=enterMaster;
   if((b=$('#sbMine')))b.onclick=function(){exitMaster();render();setStatus()};
+}
+var gsiReady=false;
+function onGoogleCred(resp){
+  if(!resp||!resp.credential||!auth)return;
+  errMsg='';setStatus();
+  auth.signInWithCredential(fb.auth.GoogleAuthProvider.credential(resp.credential)).catch(function(e){errMsg=authErr(e);setStatus()});
+}
+function initGsi(){
+  if(!cfg||!cfg.clientId||gsiReady)return;
+  loadScript('https://accounts.google.com/gsi/client').then(function(){
+    if(!window.google||!google.accounts||!google.accounts.id)return;
+    google.accounts.id.initialize({client_id:cfg.clientId,callback:onGoogleCred,ux_mode:'popup',auto_select:false,cancel_on_tap_outside:true});
+    gsiReady=true;setStatus();
+  }).catch(function(){errMsg='Google sign-in could not load. Check your internet, and turn off any ad blocker for this page.';setStatus()});
+}
+function renderGsiButton(){
+  var box=document.getElementById('gsiBtn');
+  if(!box||!gsiReady)return;
+  try{google.accounts.id.renderButton(box,{theme:'filled_blue',size:'large',text:'signin_with',shape:'rectangular',width:Math.min(280,Math.max(200,(box.parentElement||document.body).clientWidth-24))})}catch(e){}
 }
 function signIn(){
   errMsg='';setStatus();
@@ -1288,7 +1311,7 @@ async function init(){
     await loadFirebase();
     fb=window.firebase;if(!fb.apps.length)fb.initializeApp(cfg);
     db=fb.firestore();try{var p=db.enablePersistence({synchronizeTabs:true});if(p&&p.catch)p.catch(function(){})}catch(e){}
-    auth=fb.auth();auth.onAuthStateChanged(onUser);
+    auth=fb.auth();auth.onAuthStateChanged(onUser);initGsi();
   }catch(e){errMsg='The sync service could not load. Check your internet, and turn off any ad blocker for this page.';setStatus()}
 }
 var masterUnsub=null;
@@ -1386,7 +1409,7 @@ window.__rsbMasterDelete=function(path){
 /* setup dialog */
 function openSetup(){
   $('#hostName').textContent=location.hostname||'your-site.github.io';
-  $('#cfgText').value='';$('#cfgMsg').hidden=true;
+  $('#cfgText').value='';$('#cfgMsg').hidden=true;$('#cidText').value=(cfg&&cfg.clientId)||'';$('#originName').textContent=location.origin;
   var lb=$('#linkBox');
   if(cfg){lb.hidden=false;$('#cfgLink').value=location.origin+location.pathname+'#cfg='+encodeURIComponent(btoa(JSON.stringify(cfg)))}else lb.hidden=true;
   $('#syncSheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
@@ -1402,10 +1425,20 @@ $('#copyRules').onclick=function(){copyText($('#rulesText').textContent,'Rules c
 $('#copyLink').onclick=function(){copyText($('#cfgLink').value,'Link copied.',$('#cfgLink'))};
 $('#cfgLink').addEventListener('focus',function(){this.select()});
 $('#cfgSave').onclick=function(){
-  var t=$('#cfgText').value.trim(),m=$('#cfgMsg');
-  if(!t){if(cfg){closeSetup();return}m.textContent='Paste the firebaseConfig block first.';m.hidden=false;return}
-  var c=parseCfg(t);
-  if(!c){m.textContent='That does not look right. It must include apiKey, authDomain, projectId and appId.';m.hidden=false;return}
+  var t=$('#cfgText').value.trim(),m=$('#cfgMsg'),cid=$('#cidText').value.trim();
+  var bad=function(x){m.textContent=x;m.hidden=false};
+  if(cid&&!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(cid)){bad('The Web client ID should end in .apps.googleusercontent.com.');return}
+  var c;
+  if(!t){
+    if(!cfg){bad('Paste the firebaseConfig block first.');return}
+    if((cfg.clientId||'')===cid){closeSetup();return}
+    c=Object.assign({},cfg);
+  }else{
+    c=parseCfg(t);
+    if(!c){bad('That does not look right. It must include apiKey, authDomain, projectId and appId.');return}
+  }
+  if(cid)c.clientId=cid;else if(!c.clientId&&cfg&&cfg.clientId)c.clientId=cfg.clientId;
+  if(!cid&&!t)delete c.clientId;
   try{localStorage.setItem(CFG_KEY,JSON.stringify(c))}catch(e){}
   m.textContent='Saved. Reloading to start sync...';m.hidden=false;
   setTimeout(function(){location.reload()},600);
