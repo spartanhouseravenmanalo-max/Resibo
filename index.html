@@ -3,15 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Resibo</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0d6b57">
-<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Resibo">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/png" href="icon-192.png">
-<title>Resibo Encoder</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
@@ -191,6 +190,11 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:80;
   background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px)}
+/* messages sit at the top while a panel is open, so they never cover the Save button */
+.toast.top{bottom:auto;top:max(12px,env(safe-area-inset-top,0px))}
+#installBtn{position:static}
+body.panel-open #installBtn{display:none!important}
+.panel>footer{position:relative;z-index:5}
 @media (max-width:560px){
   .capture,.ledger{padding:14px}
   .qi{grid-template-columns:40px minmax(0,1fr)}
@@ -205,7 +209,10 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
   <header class="top">
     <h1 class="brand">Resi<span>bo</span></h1>
     <span class="tag">Receipt encoder for BIR VAT and income tax returns</span>
+    <button class="btn sm" id="installBtn" type="button" hidden style="margin-left:auto">Install app</button>
   </header>
+
+  <div class="note" id="inappNote" hidden><b>Open this in Chrome or Safari.</b> You seem to be inside another app, such as Messenger. Google sign-in and the camera may not work here. Tap the menu (three dots) and choose <b>Open in browser</b> or <b>Open in Chrome</b>, or copy the link and paste it into Chrome or Safari.</div>
 
   <div class="syncbar" id="syncbar"></div>
 
@@ -213,11 +220,11 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
     <div class="drop" id="drop">
       <div class="drop-copy">
         <h2>Add receipts</h2>
-        <p>Take a photo or upload receipt images. The page reads the text on your device, fills in the TIN, invoice number, date and VAT, then you check each one before exporting. One receipt per photo, flat, in good light.</p>
+        <p>Take a photo, or upload receipt images or PDF files. The page reads the text on your device, fills in the TIN, invoice number, date and VAT, then you check each one before exporting. One receipt per photo, flat, in good light.</p>
       </div>
       <div class="drop-actions">
         <button class="btn primary" id="camBtn" type="button">Take photo</button><input type="file" id="cam" accept="image/*" capture="environment" hidden>
-        <label class="btn" id="upLbl">Upload images<input type="file" id="up" accept="image/*" multiple hidden></label>
+        <label class="btn" id="upLbl">Upload images or PDF<input type="file" id="up" accept="image/*,application/pdf,.pdf" multiple hidden></label>
         <button class="btn" id="manualBtn" type="button">Enter manually</button>
       </div>
     </div>
@@ -296,14 +303,14 @@ legend{font:600 13px var(--f-body);text-transform:uppercase;letter-spacing:.06em
         <fieldset style="margin-top:18px">
           <legend>Amounts (pesos, as paid)</legend>
           <div class="row">
-            <label class="f">Vatable sales, VAT included<input type="number" step="0.01" min="0" inputmode="decimal" data-k="grossVatable" id="f_grossVatable" placeholder="0.00"></label>
-            <label class="f">VAT amount (12%)<input type="number" step="0.01" min="0" inputmode="decimal" data-k="vatAmount" id="f_vatAmount" placeholder="0.00"></label>
+            <label class="f">Vatable sales, excluding VAT<input type="number" step="0.01" min="0" inputmode="decimal" data-k="netVatable" id="f_netVatable" placeholder="0.00"></label>
+            <label class="f">VAT amount (12%, filled in for you)<input type="number" step="0.01" min="0" inputmode="decimal" data-k="vatAmount" id="f_vatAmount" placeholder="0.00"></label>
             <label class="f">VAT-exempt sales<input type="number" step="0.01" min="0" inputmode="decimal" data-k="exempt" id="f_exempt" placeholder="0.00"></label>
             <label class="f">Zero-rated sales<input type="number" step="0.01" min="0" inputmode="decimal" data-k="zeroRated" id="f_zeroRated" placeholder="0.00"></label>
           </div>
           <div class="derived">
-            <div><span>Total paid</span><b id="dTotal">0.00</b></div>
-            <div><span>Vatable, net of VAT</span><b id="dNet">0.00</b></div>
+            <div><span>Total paid (vatable + VAT + exempt + zero-rated)</span><b id="dTotal">0.00</b></div>
+            <div><span>Vatable, with VAT added</span><b id="dNet">0.00</b></div>
             <div><span>Input VAT claimed</span><b id="dClaim">0.00</b></div>
             <div><span>Deductible expense</span><b id="dDed">0.00</b></div>
           </div>
@@ -417,7 +424,8 @@ function fmtTin(s){var d=String(s||'').replace(/\D/g,'');if(d.length<9)return St
 function validDate(d){return /^\d{4}-\d{2}-\d{2}$/.test(d||'')&&!isNaN(new Date(d+'T00:00:00'))}
 function qOf(d){return Math.ceil(Number(d.slice(5,7))/3)}
 function todayISO(){return new Date().toISOString().slice(0,10)}
-function toast(msg){var t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
+function syncPanelFlag(){document.body.classList.toggle('panel-open',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden)}
+function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden);t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
 
 /* ---------- model ---------- */
 function blank(){return {id:'',date:'',supplier:'',tin:'',address:'',invoiceNo:'',docType:'Sales Invoice',supplierVat:'VAT',buyerShown:false,
@@ -578,14 +586,15 @@ function renderTable(){
   $('#tfoot').innerHTML=rows.length?'<tr><td colspan="4">Total shown</td><td class="num">'+fmt(g)+'</td><td class="num">'+fmt(v)+'</td><td colspan="3"></td></tr>':'';
   $('#empty').hidden=rows.length>0;
 }
+var PDF_ICON='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" rx="6" fill="#b3261e"/><text x="24" y="30" font-family="Arial" font-weight="700" font-size="15" text-anchor="middle" fill="#fff">PDF</text></svg>');
 function renderQueue(){
   $('#queue').innerHTML=queue.map(function(it){
     var s,a='';
     if(it.status==='wait')s='Waiting';
     else if(it.status==='read')s='<span class="spin"></span>'+esc(it.prog||'Reading the receipt');
-    else if(it.status==='done'){s='Filled in. Check it before you export.';a='<button class="btn sm primary" data-act="review" data-q="'+it.id+'" type="button">Review</button><button class="btn sm" data-act="dismiss" data-q="'+it.id+'" type="button">Dismiss</button>'}
+    else if(it.status==='done'){s=it.doneMsg?esc(it.doneMsg):'Filled in. Check it before you export.';a='<button class="btn sm primary" data-act="review" data-q="'+it.id+'" type="button">Review</button><button class="btn sm" data-act="dismiss" data-q="'+it.id+'" type="button">Dismiss</button>'}
     else{s=esc(it.msg||'Could not read this receipt.');a='<button class="btn sm" data-act="retry" data-q="'+it.id+'" type="button">Try again</button><button class="btn sm" data-act="manual" data-q="'+it.id+'" type="button">Enter manually</button><button class="btn sm" data-act="dismiss" data-q="'+it.id+'" type="button">Remove</button>'}
-    return '<li class="qi '+it.status+'"><img src="'+it.url+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
+    return '<li class="qi '+it.status+'"><img src="'+(it.isPdf?(it.thumb||PDF_ICON):it.url)+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
   }).join('');
 }
 function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();renderStats();renderNotices();renderTable();renderQueue()}
@@ -608,7 +617,7 @@ function loadBitmap(file){
   return new Promise(function(res,rej){var im=new Image();im.onload=function(){res(im)};im.onerror=rej;im.src=URL.createObjectURL(file)});
 }
 async function prepCanvas(file,mode){
-  var bmp=await loadBitmap(file);
+  var bmp=(typeof HTMLCanvasElement!=='undefined'&&file instanceof HTMLCanvasElement)?file:await loadBitmap(file);
   var w=bmp.width,h=bmp.height,sc=1;
   if(w<1100)sc=2;else if(w>2200)sc=2200/w;
   var cw=Math.round(w*sc),ch=Math.round(h*sc);
@@ -765,16 +774,22 @@ function parseReceiptText(text){
   var pv=o.printedVatableSales,pt=o.printedVatAmount,pe=o.printedExemptSales,pz=o.printedZeroRatedSales,tot=o.printedTotal;
   function near(a,b){return Math.abs(a-b)<0.06}
   if(pv!==null&&pv>0){
-    var expVat=Math.round(pv*12/112*100)/100;
-    if(pt===null){o.printedVatAmount=expVat;o.notes.push('VAT was not read. It was calculated as 12/112 of the vatable amount.')}
-    else if(!near(pt,expVat)){o.printedVatAmount=expVat;o.notes.push('Read VAT '+pt.toFixed(2)+' did not match 12/112 of the vatable amount. Using '+expVat.toFixed(2)+'.')}
+    /* some receipts print vatable sales with VAT included, others without. Work out which. */
+    var ee=pe||0,zz=pz||0,netMode=false;
+    if(pt!==null&&pt>0){
+      if(tot!==null)netMode=near(pv+pt+ee+zz,tot)&&!near(pv+ee+zz,tot);
+      else netMode=near(pt,pv*0.12)&&!near(pt,pv*12/112);
+    }
+    var expVat=Math.round(pv*(netMode?0.12:12/112)*100)/100;
+    if(pt===null){o.printedVatAmount=expVat;o.notes.push('VAT was not read. It was calculated from the vatable amount.')}
+    else if(!near(pt,expVat)){o.printedVatAmount=expVat;o.notes.push('Read VAT '+pt.toFixed(2)+' did not match the vatable amount. Using '+expVat.toFixed(2)+'.')}
     if(tot!==null){
-      var rest=Math.round((tot-pv)*100)/100;
-      var zz=pz||0;
+      var gross=netMode?pv+o.printedVatAmount:pv;
+      var rest=Math.round((tot-gross)*100)/100;
       if(pe===null||!near(pe+zz,rest)){
-        if(rest>=0){
-          if(pe!==null&&!near(pe,rest-zz))o.notes.push('Read exempt amount '+pe.toFixed(2)+' did not fit the total. Using '+(rest-zz).toFixed(2)+'.');
-          o.printedExemptSales=Math.round((rest-zz)*100)/100;
+        if(rest>=-0.05){
+          if(pe!==null&&!near(pe,rest-zz))o.notes.push('Read exempt amount '+pe.toFixed(2)+' did not fit the total. Using '+Math.max(0,rest-zz).toFixed(2)+'.');
+          o.printedExemptSales=Math.max(0,Math.round((rest-zz)*100)/100);
         }else{
           o.notes.push('Vatable amount is larger than the total. Check the amounts.');
         }
@@ -800,6 +815,64 @@ function mergeParsed(list){
   return base;
 }
 
+/* ---------- PDF support ---------- */
+var PDF_SRC='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',PDF_WORKER='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',PDF_MAXPAGES=20;
+function loadPdfJs(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  return new Promise(function(res,rej){
+    var el=document.createElement('script');el.src=PDF_SRC;
+    el.onload=function(){if(window.pdfjsLib){try{window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDF_WORKER}catch(e){}res(window.pdfjsLib)}else rej({code:'nopdf'})};
+    el.onerror=function(){rej({code:'nopdf'})};document.head.appendChild(el);
+  });
+}
+async function pdfPageText(page){
+  var tc=await page.getTextContent(),items=[];
+  tc.items.forEach(function(i){if(i.str&&i.str.trim()!=='')items.push({s:i.str,x:i.transform[4],y:i.transform[5],w:i.width||0})});
+  items.sort(function(a,b){return b.y-a.y||a.x-b.x});
+  var lines=[],cur=null;
+  items.forEach(function(it){if(!cur||Math.abs(cur.y-it.y)>3){cur={y:it.y,parts:[]};lines.push(cur)}cur.parts.push(it)});
+  return lines.map(function(l){
+    l.parts.sort(function(a,b){return a.x-b.x});
+    var out='',end=null;
+    l.parts.forEach(function(p){if(end!==null)out+=(p.x-end>12?'  ':' ');out+=p.s;end=p.x+p.w});
+    return out;
+  }).join('\n');
+}
+async function renderPdfPage(page,targetW){
+  var vp=page.getViewport({scale:1});
+  var sc=Math.min(3,Math.max(1,targetW/vp.width));
+  var v=page.getViewport({scale:sc});
+  var cv=document.createElement('canvas');cv.width=Math.round(v.width);cv.height=Math.round(v.height);
+  var cx=cv.getContext('2d',{willReadFrequently:true});cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:cx,viewport:v}).promise;
+  return cv;
+}
+function smallJpeg(cv,w){
+  var sc=Math.min(1,w/cv.width),c=document.createElement('canvas');c.width=Math.round(cv.width*sc);c.height=Math.round(cv.height*sc);
+  c.getContext('2d').drawImage(cv,0,0,c.width,c.height);return c.toDataURL('image/jpeg',0.72);
+}
+async function scanPdf(file,progress,item){
+  var lib;try{lib=await loadPdfJs()}catch(e){throw {code:'nopdf'}}
+  var pdf;
+  try{pdf=await lib.getDocument({data:await file.arrayBuffer()}).promise}
+  catch(e){throw {code:(e&&e.name==='PasswordException')?'pdfpass':'pdfbad'}}
+  var n=Math.min(pdf.numPages,PDF_MAXPAGES),pages=[];
+  for(var i=1;i<=n;i++){
+    var label='PDF page '+i+' of '+n;progress(label,0);
+    var page=await pdf.getPage(i),text='',parsed=null;
+    try{text=await pdfPageText(page)}catch(e){}
+    var cv=await renderPdfPage(page,1600);
+    if(i===1&&item)item.thumb=smallJpeg(cv,96);
+    if(text.replace(/\s/g,'').length>=40){parsed=parseReceiptText(text);parsed._text=text}
+    if(!parsed||(!parsed.printedTotal&&!parsed.supplierTin)){
+      var o=await scanFile(cv,function(l,p){progress(label+', '+l.toLowerCase(),p)});
+      parsed=parsed?mergeParsed([parsed,o]):o;
+      parsed._text=(text?text+'\n\n----- reading the page image -----\n\n':'')+(o._text||'');
+    }
+    pages.push({n:i,parsed:parsed,img:smallJpeg(cv,900)});
+  }
+  return {pages:pages,total:pdf.numPages};
+}
 function lookupSupplier(r){
   var key=String(r.tin||'').replace(/\D/g,'');if(key.length<9)return;
   var m=state.receipts.filter(function(o){return o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
@@ -809,6 +882,10 @@ function lookupSupplier(r){
   r.ocrNotes=(r.ocrNotes||[]).concat('Supplier name, address and category were filled from your earlier receipt with this TIN.');
 }
 function errCopy(e){
+  if(e&&e.code==='nopdf')return 'The PDF reader could not load. It needs internet the first time. Try again, or upload a photo of the receipt.';
+  if(e&&e.code==='pdfpass')return 'This PDF is password protected. Remove the password and try again.';
+  if(e&&e.code==='pdfbad')return 'This PDF could not be opened. It may be damaged.';
+  if(e&&e.code==='pdfempty')return 'No receipt could be found in this PDF. Try a photo, or enter it manually.';
   if(e&&e.code==='noengine'){
     var d=e.detail&&(e.detail.message||String(e.detail));
     var inFrame=false;try{inFrame=window.top!==window.self||location.protocol==='blob:'||location.protocol==='about:'}catch(x){inFrame=true}
@@ -818,9 +895,10 @@ function errCopy(e){
 }
 function addFiles(files){
   if(masterOn){toast('Switch back to your own list to add receipts.');return}
-  var list=Array.prototype.filter.call(files||[],function(f){return /^image\//.test(f.type)});
-  if(!list.length){toast('Choose an image file.');return}
-  list.forEach(function(f){queue.push({id:++qid,file:f,url:URL.createObjectURL(f),status:'wait',msg:'',rid:'',prog:''})});
+  var isPdf=function(f){return f.type==='application/pdf'||/\.pdf$/i.test(f.name||'')};
+  var list=Array.prototype.filter.call(files||[],function(f){return /^image\//.test(f.type)||isPdf(f)});
+  if(!list.length){toast('Choose an image or PDF file.');return}
+  list.forEach(function(f){queue.push({id:++qid,file:f,url:isPdf(f)?'':URL.createObjectURL(f),isPdf:isPdf(f),thumb:'',status:'wait',msg:'',rid:'',prog:''})});
   renderQueue();processQueue();
 }
 async function processQueue(){
@@ -828,6 +906,27 @@ async function processQueue(){
   var it;
   while((it=queue.find(function(x){return x.status==='wait'}))){
     it.status='read';it.prog='Starting';renderQueue();
+    if(it.isPdf){
+      try{
+        var res=await scanPdf(it.file,function(label,p){it.prog=label+(p?' ('+Math.round(p*100)+'%)':'');var el=document.querySelector('[data-qs="'+it.id+'"]');if(el)el.innerHTML='<span class="spin"></span>'+esc(it.prog)},it);
+        var made=0,skipped=0;
+        res.pages.forEach(function(pg){
+          var j=pg.parsed;
+          if(!j.printedTotal&&!j.supplierTin&&!j.invoiceNo&&!j.printedVatableSales){skipped++;return}
+          var r=fromScan(j);r.id=uid();r.ocrNotes=j.notes.slice();if(res.pages.length>1)r.ocrNotes.unshift('Read from page '+pg.n+' of '+it.file.name+'.');
+          r.ocrText=String(j._text||'').slice(0,6000);lookupSupplier(r);imgs[r.id]=pg.img;
+          state.receipts.push(r);made++;if(!it.rid)it.rid=r.id;
+        });
+        if(!made)throw {code:'pdfempty'};
+        persist();it.status='done';
+        it.doneMsg=made+(made>1?' receipts':' receipt')+' added from this PDF'+(skipped?', '+skipped+' blank page'+(skipped>1?'s':'')+' skipped':'')+(res.total>res.pages.length?'. Only the first '+res.pages.length+' of '+res.total+' pages were read':'')+'. Check each one in the table below.';
+        render();
+      }catch(e){
+        it.status='fail';it.msg=errCopy(e);
+        if(e&&e.code==='noengine'){queue.forEach(function(x){if(x.status==='wait'&&!x.isPdf){x.status='fail';x.msg=it.msg}})}
+      }
+      renderQueue();continue;
+    }
     try{
       var j=await scanFile(it.file,function(label,p){it.prog=label+(p?' ('+Math.round(p*100)+'%)':'');var el=document.querySelector('[data-qs="'+it.id+'"]');if(el)el.innerHTML='<span class="spin"></span>'+esc(it.prog)});
       var r=fromScan(j);r.id=uid();r.ocrNotes=j.notes.slice();r.ocrText=String(j._text||'').slice(0,6000);
@@ -846,7 +945,7 @@ async function processQueue(){
 function fillForm(){
   var els=document.querySelectorAll('#form [data-k]');
   Array.prototype.forEach.call(els,function(el){
-    var k=el.dataset.k,v=draft[k];
+    var k=el.dataset.k,v=(k==='netVatable')?draft._net:draft[k];
     if(el.type==='checkbox')el.checked=!!v;
     else if(el.type==='number')el.value=num(v)?num(v):'';
     else el.value=v==null?'':v;
@@ -855,7 +954,8 @@ function fillForm(){
 function setField(k,v){var el=$('#f_'+k);if(!el)return;if(el.type==='number')el.value=num(v)?num(v):'';else el.value=v}
 function updateDerived(){
   $('#dTotal').textContent=fmt(total(draft));
-  $('#dNet').textContent=fmt(netVatable(draft));
+  $('#dNet').textContent=fmt(draft.grossVatable);
+  var pv=$('#f_vatAmount');if(pv)pv.placeholder=draft._vat?'0.00':fmt(round2(num(draft._net)*0.12));
   $('#dClaim').textContent=fmt(claimed(draft));
   $('#dDed').textContent=fmt(deductible(draft));
   var f=flagsFor(draft);
@@ -868,7 +968,7 @@ function openSheet(id,opts){
   var ex=id?srcRows().find(function(r){return (r._path||r.id)===id}):null;
   isNew=!ex;
   draft=ex?Object.assign({},ex):Object.assign(blank(),{id:uid(),source:'manual',reviewed:true});
-  draft._vat=!!ex;
+  draft._net=netVatable(draft);draft._vat=!!ex&&Math.abs(num(draft.vatAmount)-draft._net*0.12)>0.02;
   var img=ex?imgs[id]:opts.img;
   if(isNew&&opts.img)imgs[draft.id]=opts.img;
   $('#shot').hidden=!img;if(img)$('#shotImg').src=img;
@@ -878,21 +978,33 @@ function openSheet(id,opts){
   $('#delBtn').hidden=isNew;delArmed=false;$('#delBtn').textContent='Delete';
   fillForm();updateDerived();
   if(masterOn&&ex){$('#sheetTitle').textContent='Edit receipt from '+(ex.by||'an account')}
-  $('#sheet').hidden=false;document.body.style.overflow='hidden';
+  $('#sheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
   setTimeout(function(){$('#f_date').focus({preventScroll:true})},30);
 }
 function closeSheet(){
-  $('#sheet').hidden=true;document.body.style.overflow='';draft=null;
+  $('#sheet').hidden=true;document.body.style.overflow='';draft=null;syncPanelFlag();
   if(lastFocus&&lastFocus.focus)try{lastFocus.focus()}catch(e){}
 }
 $('#form').addEventListener('input',function(e){
   var t=e.target,k=t.dataset&&t.dataset.k;if(!k||!draft)return;
+  var autoVat=function(){return draft.supplierVat==='VAT'?round2(num(draft._net)*0.12):0};
+  if(k==='netVatable'){
+    draft._net=num(t.value);
+    if(!draft._vat){draft.vatAmount=autoVat();setField('vatAmount',draft.vatAmount)}
+    draft.grossVatable=round2(draft._net+num(draft.vatAmount));
+    updateDerived();return;
+  }
   if(t.type==='checkbox')draft[k]=t.checked;
   else if(t.type==='number')draft[k]=num(t.value);
   else draft[k]=t.value;
-  if(k==='vatAmount')draft._vat=true;
-  if(k==='grossVatable'&&!draft._vat&&draft.supplierVat==='VAT'){draft.vatAmount=round2(num(draft.grossVatable)*12/112);setField('vatAmount',draft.vatAmount)}
-  if(k==='supplierVat'&&t.value==='NON-VAT'&&draft.claimVat){draft.claimVat=false;$('#f_claimVat').checked=false}
+  if(k==='vatAmount'){
+    if(t.value===''){draft._vat=false;draft.vatAmount=autoVat()}else draft._vat=true;
+    draft.grossVatable=round2(num(draft._net)+num(draft.vatAmount));
+  }
+  if(k==='supplierVat'){
+    if(t.value==='NON-VAT'&&draft.claimVat){draft.claimVat=false;$('#f_claimVat').checked=false}
+    if(!draft._vat){draft.vatAmount=autoVat();setField('vatAmount',draft.vatAmount);draft.grossVatable=round2(num(draft._net)+num(draft.vatAmount))}
+  }
   updateDerived();
 });
 $('#form').addEventListener('change',function(e){
@@ -901,7 +1013,7 @@ $('#form').addEventListener('change',function(e){
 });
 $('#saveBtn').onclick=function(){
   if(!draft)return;
-  var r=Object.assign({},draft);delete r._vat;
+  var r=Object.assign({},draft);delete r._vat;delete r._net;
   r.supplier=r.supplier.trim();r.invoiceNo=r.invoiceNo.trim();r.tin=fmtTin(r.tin);
   r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
   if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);closeSheet();toast('Saved to '+(r.by||'the account')+' list.');return}
@@ -923,7 +1035,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#cam
 $('#f_category').innerHTML=CATS.map(function(c){return '<option>'+esc(c)+'</option>'}).join('');
 $('#cam').onchange=function(e){addFiles(e.target.files);e.target.value=''};
 var camStream=null;
-function stopCam(){if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}$('#camSheet').hidden=true;document.body.style.overflow=''}
+function stopCam(){setTimeout(syncPanelFlag,0);if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}$('#camSheet').hidden=true;document.body.style.overflow=''}
 $('#camBtn').onclick=async function(){
   if(masterOn){toast('Switch back to your own list to add receipts.');return}
   var md=navigator.mediaDevices;
@@ -931,7 +1043,7 @@ $('#camBtn').onclick=async function(){
   try{
     camStream=await md.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1920}},audio:false});
     var v=$('#camVideo');v.srcObject=camStream;
-    $('#camSheet').hidden=false;document.body.style.overflow='hidden';
+    $('#camSheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
     try{await v.play()}catch(e){}
   }catch(e){
     camStream=null;
@@ -1100,6 +1212,22 @@ $('#exportBtn').onclick=function(){
 /* ---------- boot ---------- */
 load();syncSettings();render();
 
+/* ---------- install as an app ---------- */
+(function(){
+  if(/FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram|Line\/|Viber|Snapchat|Telegram|MicroMessenger|TikTok|Twitter/i.test(navigator.userAgent)){var n=$('#inappNote');if(n)n.hidden=false}
+  var dp=null,btn=$('#installBtn');
+  var standalone=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;
+  if(!standalone&&btn)btn.hidden=false;
+  window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();dp=e});
+  window.addEventListener('appinstalled',function(){if(btn)btn.hidden=true;toast('Resibo is installed.')});
+  if(btn)btn.onclick=function(){
+    if(dp){dp.prompt();dp.userChoice.then(function(){dp=null});return}
+    var ios=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    toast(ios?'In Safari, tap the Share button, then Add to Home Screen.':'Open the browser menu (three dots), then Install app or Add to Home Screen.');
+  };
+  if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('sw.js').catch(function(){})}
+})();
+
 /* ---------- cloud sync (Firebase, optional) ---------- */
 (function(){
 var FB_VER='10.12.2',CFG_KEY='resibo.fbcfg',IDS_KEY='resibo.syncedids';
@@ -1261,9 +1389,9 @@ function openSetup(){
   $('#cfgText').value='';$('#cfgMsg').hidden=true;
   var lb=$('#linkBox');
   if(cfg){lb.hidden=false;$('#cfgLink').value=location.origin+location.pathname+'#cfg='+encodeURIComponent(btoa(JSON.stringify(cfg)))}else lb.hidden=true;
-  $('#syncSheet').hidden=false;document.body.style.overflow='hidden';
+  $('#syncSheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
 }
-function closeSetup(){$('#syncSheet').hidden=true;document.body.style.overflow=''}
+function closeSetup(){$('#syncSheet').hidden=true;document.body.style.overflow='';syncPanelFlag()}
 function copyText(t,okMsg,field){
   var done=function(){toast(okMsg)};
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){if(field){field.select();toast('Select and copy the text.')}})}
@@ -1285,39 +1413,6 @@ $('#cfgSave').onclick=function(){
 window.addEventListener('online',setStatus);window.addEventListener('offline',setStatus);
 loadCfg();init();
 })();
-})();
-</script>
-<script>
-/* ---------- installable app: service worker + install button ---------- */
-(function(){
-  if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
-    window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});
-  }
-  var standalone=(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
-  if(standalone)return;
-  var deferred=null,btn=null;
-  function mk(label,onclick){
-    if(btn)return;
-    btn=document.createElement('button');
-    btn.type='button';btn.className='btn primary';btn.textContent=label;
-    btn.style.cssText='position:fixed;right:16px;bottom:max(16px,env(safe-area-inset-bottom,0px));z-index:70;box-shadow:0 2px 10px rgba(0,0,0,.25)';
-    btn.onclick=onclick;document.body.appendChild(btn);
-  }
-  window.addEventListener('beforeinstallprompt',function(e){
-    e.preventDefault();deferred=e;
-    mk('Install app',function(){
-      if(!deferred)return;deferred.prompt();
-      deferred.userChoice.then(function(){deferred=null;if(btn){btn.remove();btn=null}});
-    });
-  });
-  window.addEventListener('appinstalled',function(){if(btn){btn.remove();btn=null}});
-  /* iPhone and iPad have no install prompt: show the two taps instead. */
-  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  if(ios){
-    mk('Install app',function(){
-      alert('To install on iPhone or iPad:\n1. Open this page in Safari.\n2. Tap the Share button.\n3. Tap "Add to Home Screen".');
-    });
-  }
 })();
 </script>
 </body>
