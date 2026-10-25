@@ -468,6 +468,36 @@ body.panel-open #installBtn{display:none!important}
     </footer>
   </aside>
 </div>
+<div class="sheet" id="paySheet" hidden>
+  <div class="scrim" id="payScrim"></div>
+  <aside class="panel" role="dialog" aria-modal="true" aria-labelledby="payTitle">
+    <header><h2 id="payTitle">Payroll item</h2><button class="icon" id="payClose" type="button" aria-label="Close">&times;</button></header>
+    <div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:center"><button class="btn primary" id="payLockBtn" type="button" style="flex:1">🔒 Lock item</button></div>
+      <ul class="flags" id="payFlags"></ul>
+      <div id="payLockNote" class="lock-note" hidden></div>
+      <form id="payForm" autocomplete="off" onsubmit="return false">
+        <fieldset>
+          <legend>Payroll</legend>
+          <div class="row">
+            <label class="f">Date paid<input type="date" data-p="date" id="p_date"></label>
+            <label class="f">Type<select data-p="payType" id="p_payType"><option value="wages">Salaries and wages</option><option value="bonus">13th month pay and bonuses</option><option value="contrib">Employer contributions (SSS, PhilHealth, Pag-IBIG)</option><option value="benefits">Other employee benefits</option></select></label>
+          </div>
+          <label class="f">Employee or payroll period<input data-p="name" id="p_name" placeholder="Juan Dela Cruz, or Payroll Oct 1-15"></label>
+          <label class="f">Amount (pesos)<input type="number" step="0.01" min="0" inputmode="decimal" data-p="amount" id="p_amount" placeholder="0.00"></label>
+          <label class="f">Notes<input data-p="notes" id="p_notes" placeholder="Optional"></label>
+        </fieldset>
+        <p class="muted" style="margin:10px 0 0;font-size:13px">Use the gross pay before deductions. Tax withheld from employees is part of the gross pay, so do not add it again. Payroll has no VAT, so it only affects your income tax.</p>
+      </form>
+    </div>
+    <footer>
+      <button class="btn danger" id="payDel" type="button">Delete</button>
+      <span class="grow"></span>
+      <button class="btn" id="payCancel" type="button">Cancel</button>
+      <button class="btn primary" id="paySave" type="button">Save item</button>
+    </footer>
+  </aside>
+</div>
 <div class="pin-wrap" id="pinSheet" hidden>
   <div class="pin-card" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
     <h2 id="pinTitle" style="margin:0 0 6px;font-size:18px">Enter PIN</h2>
@@ -536,7 +566,8 @@ var PTYPES=['goods','services','capital'];
 var state={receipts:[],settings:{name:'',tin:''}};
 var imgs={};
 var masterOn=false,masterRows=[],curTab='p',lockMode='all';
-function srcRows(){return (masterOn?masterRows:state.receipts).filter(function(r){return r.kind!=='sale'})}
+function isPurchase(r){return r.kind!=='sale'&&r.kind!=='payroll'}
+function srcRows(){return (masterOn?masterRows:state.receipts).filter(isPurchase)}
 var storageOK=true;
 var draft=null,isNew=false,lastFocus=null,delArmed=false;
 var queue=[],busy=false,qid=0;
@@ -553,8 +584,8 @@ function fmtTin(s){var d=String(s||'').replace(/\D/g,'');if(d.length<9)return St
 function validDate(d){return /^\d{4}-\d{2}-\d{2}$/.test(d||'')&&!isNaN(new Date(d+'T00:00:00'))}
 function qOf(d){return Math.ceil(Number(d.slice(5,7))/3)}
 function todayISO(){return new Date().toISOString().slice(0,10)}
-function syncPanelFlag(){document.body.classList.toggle('panel-open',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden)}
-function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden);t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
+function syncPanelFlag(){document.body.classList.toggle('panel-open',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden||!$('#paySheet').hidden)}
+function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden||!$('#paySheet').hidden);t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
 
 /* ---------- model ---------- */
 function blank(){return {id:'',date:'',supplier:'',tin:'',address:'',invoiceNo:'',docType:'Sales Invoice',supplierVat:'VAT',buyerShown:false,
@@ -580,7 +611,7 @@ function flagsFor(r){
   if(r.claimVat&&!r.buyerShown)f.push(['warn','Claiming input VAT, but the receipt shows no buyer name and TIN.']);
   if(r.claimVat&&num(r.vatAmount)<=0)f.push(['warn','Claiming input VAT, but the VAT amount is zero.']);
   var key=digits>=9?String(r.tin).replace(/\D/g,''):'';
-  if(key&&r.invoiceNo&&state.receipts.some(function(o){return o.kind!=='sale'&&o.id!==r.id&&String(o.tin).replace(/\D/g,'')===key&&o.invoiceNo===r.invoiceNo}))f.push(['warn','Possible duplicate: same supplier and invoice number already saved.']);
+  if(key&&r.invoiceNo&&state.receipts.some(function(o){return isPurchase(o)&&o.id!==r.id&&String(o.tin).replace(/\D/g,'')===key&&o.invoiceNo===r.invoiceNo}))f.push(['warn','Possible duplicate: same supplier and invoice number already saved.']);
   if(total(r)<=0)f.push(['err','Total amount is zero.']);
   return f;
 }
@@ -1067,7 +1098,7 @@ async function scanPdf(file,progress,item){
 }
 function lookupSupplier(r){
   var key=String(r.tin||'').replace(/\D/g,'');if(key.length<9)return;
-  var m=state.receipts.filter(function(o){return o.kind!=='sale'&&o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
+  var m=state.receipts.filter(function(o){return isPurchase(o)&&o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
   if(!m)return;
   r.supplier=m.supplier;if(m.address)r.address=m.address;r.category=m.category;r.purchaseType=m.purchaseType;
   if(m.description&&!r.description)r.description=m.description;
@@ -1353,7 +1384,7 @@ $('#lockBtn').onclick=function(){
   });
 };
 $('#cancelBtn').onclick=closeSheet;$('#closeSheet').onclick=closeSheet;$('#scrim').onclick=closeSheet;
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#saleSheet').hidden)closeSale();else if(!$('#sheet').hidden)closeSheet()}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#paySheet').hidden)closePay();else if(!$('#saleSheet').hidden)closeSale();else if(!$('#sheet').hidden)closeSheet()}});
 
 /* ---------- events ---------- */
 $('#f_category').innerHTML=CATS.map(function(c){return '<option>'+esc(c)+'</option>'}).join('');
@@ -1540,6 +1571,7 @@ function buildWorkbook(rows,srows){
   a4.push(tr4);
   XLSX.utils.book_append_sheet(wb,sheet(a4,[34].concat(kl.map(function(){return 14}),[16])),'ITR - By Category');
   addItrSheet(wb);
+  addPayrollSheet(wb);
   if(srows&&srows.length)addSalesSheets(wb,srows,rows);
   return wb;
 }
@@ -1987,6 +2019,7 @@ function itrRows(y){
   var q=[0,1,2,3].map(function(){return {inc:0,exp:0,ewt:0}});
   salesAll().filter(ok).forEach(function(r){var i=qOf(r.date)-1;q[i].inc+=num(r.netAmount);q[i].ewt+=num(r.ewtAmount)});
   srcRows().filter(ok).forEach(function(r){q[qOf(r.date)-1].exp+=deductible(r)});
+  payAll().filter(ok).forEach(function(r){q[qOf(r.date)-1].exp+=num(r.amount)});
   var labels=['Q1 (Jan-Mar)','Q1-Q2 (Jan-Jun)','Q1-Q3 (Jan-Sep)','Full year (1701)'],out=[],ci=0,ce=0,cw=0,paid=0;
   for(var i=0;i<4;i++){
     ci+=q[i].inc;ce+=q[i].exp;cw+=q[i].ewt;
@@ -2017,6 +2050,7 @@ function renderItrTab(){
   var sv=[0,0,0,0],gv=[0,0,0,0];
   S.forEach(function(r){var i=qOf(r.date)-1;if(r.saleOf==='goods')gv[i]+=num(r.netAmount);else sv[i]+=num(r.netAmount)});
   var cat={};P.forEach(function(r){var c=r.category||'Miscellaneous';cat[c]=cat[c]||[0,0,0,0];cat[c][qOf(r.date)-1]+=deductible(r)});
+  payAll().filter(ok).forEach(function(r){var c='Payroll: '+payLabel(r);cat[c]=cat[c]||[0,0,0,0];cat[c][qOf(r.date)-1]+=num(r.amount)});
   var cs=Object.keys(cat).sort(),tq=[0,0,0,0];
   var th=cols.map(function(i){return '<th class="num">Q'+(i+1)+'</th>'}).join('')+'<th class="num">Total</th>';
   var sum=function(a){return cols.reduce(function(t,i){return t+a[i]},0)};
@@ -2027,6 +2061,7 @@ function renderItrTab(){
     '<p class="muted" style="margin-top:8px">Sales are counted without VAT. Expenses are what you paid minus the input VAT you claimed. Income tax uses the 2023 graduated table for individuals (first 250,000 free). The 1701Q is cumulative, so a quarter row includes every quarter before it. A negative tax due means your credits are more than the tax. This is an estimate: capital goods are not depreciated here, and other credits or deductions are not included. Check it with your accountant before you file.</p></div>'+
     (function(){var an=!(qn&&qn<4);return an?filingHtml('1701',y,[y+'-1',y+'-2',y+'-3',y+'-4'],y):filingHtml('1701Q',y+'-'+qn,[y+'-'+qn],qLabel(y+'-'+qn))})()+
     (function(){var row=qn&&qn<4?all[qn-1]:all[3];return penaltyHtml(qn&&qn<4?'1701Q':'1701',y,qn&&qn<4?qn:4,Math.max(0,row.due),row.inc)})()+
+    payListHtml(y,qn)+
     '<div><h3>Sales '+(qn?'in Q'+qn:'by quarter')+', '+esc(y)+' (VAT excluded)</h3><div class="box"><table><thead><tr><th>Sales of</th>'+th+'</tr></thead><tbody>'+row('Services',sv)+row('Goods',gv)+row('Total sales',[sv[0]+gv[0],sv[1]+gv[1],sv[2]+gv[2],sv[3]+gv[3]],'tot')+'</tbody></table></div></div>'+
     '<div><h3>Itemized expenses '+(qn?'in Q'+qn:'by category')+', '+esc(y)+'</h3><div class="box"><table><thead><tr><th>Category</th>'+th+'</tr></thead><tbody>'+(cs.length?cs.map(function(c){return row(c,cat[c])}).join('')+row('Total expenses',tq,'tot'):'<tr><td colspan="6" class="muted">No receipts in this year.</td></tr>')+'</tbody></table></div></div>';
 }
@@ -2210,6 +2245,108 @@ document.addEventListener('click',function(e){
   var go=state.settings.pinHash?Promise.resolve(true):setNewPin('Create a PIN','You will need this PIN to unlock a locked period later. Keep it safe.');
   go.then(function(ok){if(!ok)return;var n=lockQuarters(keys,date,form,fkey);toast('Locked. Filing date '+date+' saved, '+n+' entr'+(n===1?'y':'ies')+' locked.')});
 });
+
+/* ---------- payroll (deductible under the income tax return) ---------- */
+var pdraft=null,pIsNew=false,pDelArmed=false;
+var PAYTYPES={wages:'Salaries and wages',bonus:'13th month pay and bonuses',contrib:'Employer contributions (SSS, PhilHealth, Pag-IBIG)',benefits:'Other employee benefits'};
+function isPay(r){return !!r&&r.kind==='payroll'}
+function payAll(){return (masterOn?masterRows:state.receipts).filter(isPay)}
+function blankPay(){return {id:'',kind:'payroll',date:'',payType:'wages',name:'',amount:0,notes:'',reviewed:true,source:'manual',locked:false,lockedBy:'',lockedByMaster:false,added:Date.now()}}
+function payPeriod(){return filt(payAll())}
+function payLabel(r){return PAYTYPES[r.payType]||PAYTYPES.wages}
+function payListHtml(y,qn){
+  var rows=payPeriod().filter(function(r){return validDate(r.date)&&(!y||r.date.slice(0,4)===y)&&(!qn||qOf(r.date)===qn)}).sort(function(a,b){return a.date<b.date?1:a.date>b.date?-1:0});
+  var tot=0;rows.forEach(function(r){tot+=num(r.amount)});
+  return '<div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><h3 style="margin:0">Payroll, '+esc(y||'all years')+(qn?' Q'+qn:'')+'</h3><button class="btn primary sm" id="payAddBtn" type="button">+ Add payroll item</button></div>'+
+    '<div class="box"><table><thead><tr><th>Date</th><th>Employee or period</th><th>Type</th><th class="num">Amount</th><th></th></tr></thead><tbody>'+
+    (rows.length?rows.map(function(r){var id=r._path||r.id;return '<tr data-payid="'+esc(id)+'" style="cursor:pointer"><td class="mono">'+esc(r.date)+'</td><td>'+esc(r.name||'-')+(r.locked?'<span class="lk" title="Locked">🔒</span>':'')+'</td><td>'+esc(payLabel(r))+'</td><td class="num">'+fmt(r.amount)+'</td><td><button class="btn sm" type="button">Edit</button></td></tr>'}).join('')+'<tr class="tot"><td colspan="3">Total payroll</td><td class="num">'+fmt(tot)+'</td><td></td></tr>':'<tr><td colspan="5" class="muted">No payroll items for this period. They count as deductible expenses in your income tax estimate.</td></tr>')+
+    '</tbody></table></div></div>';
+}
+document.addEventListener('click',function(e){
+  if(e.target.closest&&e.target.closest('#payAddBtn')){if(masterOn){toast('Switch back to your own list to add payroll items.');return}openPay(null);return}
+  var tr=e.target.closest&&e.target.closest('tr[data-payid]');if(tr)openPay(tr.dataset.payid);
+});
+function payFlags(r){
+  var f=[];
+  if(!validDate(r.date))f.push(['warn','Date is missing.']);
+  if(num(r.amount)<=0)f.push(['err','The amount is zero.']);
+  if(!r.name)f.push(['warn','Add the employee name or the payroll period.']);
+  return f;
+}
+function updatePay(){
+  if(!pdraft)return;
+  var f=payFlags(pdraft);
+  $('#payFlags').innerHTML=f.length?f.map(function(x){return '<li class="'+x[0]+'">'+esc(x[1])+'</li>'}).join(''):'<li class="good">Nothing to fix.</li>';
+  applyPayLock();
+}
+function applyPayLock(){
+  var r=pdraft||{},lk=!!r.locked;
+  Array.prototype.forEach.call(document.querySelectorAll('#payForm input,#payForm select'),function(el){el.disabled=lk});
+  $('#paySave').hidden=lk;$('#payDel').hidden=lk||pIsNew;
+  $('#payLockBtn').textContent=lk?'🔓 Unlock item':'🔒 Lock item';
+  $('#payLockBtn').disabled=lk&&!canUnlock(r);
+  var n=$('#payLockNote');
+  if(lk){n.hidden=false;n.textContent='This item is locked'+(r.lockedBy?' by '+r.lockedBy:'')+'. It cannot be edited or deleted until it is unlocked with the PIN.'+(canUnlock(r)?'':' Only the master account can unlock it.')}
+  else n.hidden=true;
+}
+function openPay(id){
+  var ex=id?payAll().find(function(r){return (r._path||r.id)===id}):null;
+  pIsNew=!ex;pDelArmed=false;$('#payDel').textContent='Delete';
+  pdraft=ex?Object.assign({},ex):Object.assign(blankPay(),{id:uid()});
+  Array.prototype.forEach.call(document.querySelectorAll('#payForm [data-p]'),function(el){var v=pdraft[el.dataset.p];el.value=el.type==='number'?(num(v)?num(v):''):(v==null?'':String(v))});
+  updatePay();
+  $('#payTitle').textContent=pIsNew?'New payroll item':(masterOn?'Edit payroll from '+(ex.by||'an account'):'Edit payroll item');
+  $('#paySheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
+  setTimeout(function(){$('#p_date').focus({preventScroll:true})},30);
+}
+function closePay(){$('#paySheet').hidden=true;document.body.style.overflow='';pdraft=null;syncPanelFlag()}
+$('#payForm').addEventListener('input',function(e){
+  var t=e.target,k=t.dataset&&t.dataset.p;if(!k||!pdraft)return;
+  pdraft[k]=t.type==='number'?num(t.value):t.value;updatePay();
+});
+$('#paySave').onclick=function(){
+  if(!pdraft||pdraft.locked)return;
+  if(blockClosed(pdraft.date))return;
+  var r=Object.assign({},pdraft);r.kind='payroll';r.name=String(r.name||'').trim();r.amount=round2(r.amount);r.reviewed=true;
+  if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);closePay();toast('Saved to '+(r.by||'the account')+' list.');return}
+  commitReceipt(r);closePay();toast(pIsNew?'Payroll item added.':'Payroll item saved.');
+};
+$('#payDel').onclick=function(){
+  if(!pdraft||pdraft.locked)return;
+  if(!pDelArmed){pDelArmed=true;this.textContent='Confirm delete';return}
+  if(masterOn&&window.__rsbMasterDelete){window.__rsbMasterDelete(pdraft._path);closePay();toast('Payroll item deleted.');return}
+  var id=pdraft.id;state.receipts=state.receipts.filter(function(r){return r.id!==id});
+  persist();closePay();render();toast('Payroll item deleted.');
+};
+$('#payLockBtn').onclick=function(){
+  if(!pdraft)return;
+  var r=Object.assign({},pdraft);
+  if(r.locked){
+    if(!canUnlock(r)){toast('Only the master account can unlock this item.');return}
+    var chain=state.settings.pinHash?askExistingPin('Unlock item','Enter your PIN to unlock and edit this item.'):Promise.resolve(true);
+    chain.then(function(ok){if(!ok)return;r.locked=false;r.lockedBy='';r.lockedByMaster=false;r.lockedQ='';commitReceipt(r);pdraft=Object.assign({},r);pIsNew=false;updatePay();toast('Item unlocked. You can edit it now.')});
+    return;
+  }
+  var go=state.settings.pinHash?Promise.resolve(true):setNewPin('Create a PIN','You will need this PIN to unlock items later. Keep it safe.');
+  go.then(function(ok){
+    if(!ok)return;
+    r.kind='payroll';r.name=String(r.name||'').trim();r.amount=round2(r.amount);r.reviewed=true;
+    r.locked=true;r.lockedByMaster=!!masterOn;r.lockedBy=(window.__rsbUser&&window.__rsbUser())||'this device';
+    commitReceipt(r);closePay();toast('Item locked. A PIN is needed to unlock it.');
+  });
+};
+$('#payCancel').onclick=closePay;$('#payClose').onclick=closePay;$('#payScrim').onclick=closePay;
+function addPayrollSheet(wb){
+  var rows=payPeriod().sort(function(a,b){return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0});
+  if(!rows.length)return;
+  var tp=state.settings,label=periodLabel();
+  var a=[[C('PAYROLL EXPENSES FOR THE INCOME TAX RETURN')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],['Date','Quarter','Employee or period','Type','Amount','Notes','Locked','Encoded by'].map(C)];
+  var s1=a.length+1;
+  rows.forEach(function(r){a.push([C(r.date),C(validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):''),C(r.name),C(payLabel(r)),N(r.amount),C(r.notes),C(r.locked?'Yes':'No'),C(r.by||'')])});
+  var sum=0;rows.forEach(function(r){sum+=num(r.amount)});
+  a.push([C('TOTAL'),C(''),C(''),C(''),N(sum,'SUM(E'+s1+':E'+(s1+rows.length-1)+')')]);
+  XLSX.utils.book_append_sheet(wb,sheet(a,[12,10,32,40,14,30,8,28]),'ITR - Payroll');
+}
 
 /* ---------- boot ---------- */
 load();syncSettings();render();
