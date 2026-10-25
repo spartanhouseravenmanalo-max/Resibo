@@ -139,6 +139,13 @@ tbody tr:hover{background:var(--surface2)}
 tbody tr.is-review td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
 .sup{font-weight:500}
+.tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:2px solid var(--line)}
+.tabs button{appearance:none;border:0;background:transparent;color:var(--muted);font:600 15px var(--f-body);padding:10px 16px;border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;align-self:flex-end}
+.seg button{appearance:none;border:0;background:var(--surface);color:var(--ink);font:500 13px var(--f-body);padding:9px 12px;cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
 .bulk{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--accent);font-size:14px}
 .bulk[hidden]{display:none}
 .bulk .grow{flex:1}
@@ -229,7 +236,7 @@ body.panel-open #installBtn{display:none!important}
 
   <div class="syncbar" id="syncbar"></div>
 
-  <section class="capture" aria-label="Add receipts">
+  <section class="capture" id="capSec" aria-label="Add receipts">
     <div class="drop" id="drop">
       <div class="drop-copy">
         <h2>Add receipts</h2>
@@ -246,8 +253,9 @@ body.panel-open #installBtn{display:none!important}
   </section>
 
   <section class="ledger" aria-label="Receipts">
+    <div class="tabs" id="tabs" role="tablist"><button type="button" data-tab="p" class="on" role="tab">Purchases (receipts)</button><button type="button" data-tab="s" role="tab">Sales (invoices I issued)</button></div>
     <div class="bar">
-      <h2>Receipts</h2>
+      <h2 id="ledgerTitle">Receipts</h2>
       <div class="filters">
         <label class="f">Year<select id="fYear"></select></label>
         <label class="f">Quarter
@@ -255,9 +263,13 @@ body.panel-open #installBtn{display:none!important}
         </label>
         <label class="f" id="byWrap" hidden>Account<select id="fBy"><option value="">All accounts</option></select></label>
         <label class="f search">Search<input id="fSearch" type="search" placeholder="Supplier, TIN or invoice no."></label>
+        <div class="seg" id="lockSeg" role="group" aria-label="Show entries"><button type="button" data-lm="all" class="on">All entries</button><button type="button" data-lm="open">Not locked</button><button type="button" data-lm="locked">🔒 Locked</button></div>
       </div>
       <div class="bar-actions">
+        <button class="btn primary" id="saleAddBtn" type="button" hidden>+ Add sales invoice</button>
         <button class="btn primary" id="exportBtn" type="button">Export Excel</button>
+        <label class="btn">Import Excel<input type="file" id="xlsIn" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn" id="tplBtn" type="button">Excel template</button>
         <button class="btn" id="backupBtn" type="button">Backup</button>
         <label class="btn">Restore<input type="file" id="restore" accept=".json,application/json" hidden></label>
       </div>
@@ -281,7 +293,7 @@ body.panel-open #installBtn{display:none!important}
       <button class="btn sm" id="bulkUnlock" type="button">🔓 Unlock selected</button>
       <button class="btn sm" id="bulkClear" type="button">Clear</button>
     </div>
-    <div class="tablewrap">
+    <div class="tablewrap" id="pWrap">
       <table id="tbl">
         <thead><tr>
           <th style="width:34px"><input type="checkbox" id="selAll" aria-label="Select all shown receipts"></th><th>Date</th><th class="by">Encoded by</th><th>Supplier</th><th>Invoice no.</th><th class="num">Gross paid</th><th class="num">VAT</th><th>Expense category</th><th>Status</th><th></th>
@@ -290,6 +302,16 @@ body.panel-open #installBtn{display:none!important}
         <tfoot id="tfoot"></tfoot>
       </table>
       <div class="empty" id="empty" hidden>No receipts for this period. Add one above.</div>
+    </div>
+    <div class="tablewrap" id="sWrap" hidden>
+      <table id="stbl">
+        <thead><tr>
+          <th style="width:34px"><input type="checkbox" id="selAllS" aria-label="Select all shown invoices"></th><th>Date</th><th class="by">Encoded by</th><th>Invoice no.</th><th>Client</th><th class="num">Net sales</th><th class="num">Output VAT</th><th class="num">Total billed</th><th class="num">Withheld (2307)</th><th></th>
+        </tr></thead>
+        <tbody id="sbody"></tbody>
+        <tfoot id="stfoot"></tfoot>
+      </table>
+      <div class="empty" id="sempty" hidden>No sales invoices for this period. Tap Add sales invoice.</div>
     </div>
   </section>
 </div>
@@ -310,7 +332,7 @@ body.panel-open #installBtn{display:none!important}
           <legend>Receipt</legend>
           <div class="row">
             <label class="f">Date<input type="date" data-k="date" id="f_date"></label>
-            <label class="f">Document<select data-k="docType" id="f_docType"><option>Sales Invoice</option><option>Official Receipt</option><option>Cash Invoice</option><option>Other</option></select></label>
+            <label class="f">Document<select data-k="docType" id="f_docType"><option>Sales Invoice</option><option>Official Receipt</option><option>Cash Invoice</option><option>Service Invoice</option><option>Billing Invoice</option><option>Other</option></select></label>
             <label class="f">Invoice / OR no.<input data-k="invoiceNo" id="f_invoiceNo" placeholder="00049982"></label>
           </div>
         </fieldset>
@@ -379,6 +401,63 @@ body.panel-open #installBtn{display:none!important}
     </footer>
   </aside>
 </div>
+<div class="sheet" id="saleSheet" hidden>
+  <div class="scrim" id="saleScrim"></div>
+  <aside class="panel" role="dialog" aria-modal="true" aria-labelledby="saleTitle">
+    <header><h2 id="saleTitle">Sales invoice</h2><button class="icon" id="saleClose" type="button" aria-label="Close">&times;</button></header>
+    <div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:center"><button class="btn primary" id="saleLockBtn" type="button" style="flex:1">🔒 Lock invoice</button></div>
+      <ul class="flags" id="saleFlags"></ul>
+      <div id="saleLockNote" class="lock-note" hidden></div>
+      <form id="saleForm" autocomplete="off" onsubmit="return false">
+        <fieldset>
+          <legend>Invoice</legend>
+          <div class="row">
+            <label class="f">Date<input type="date" data-s="date" id="s_date"></label>
+            <label class="f">Document<select data-s="docType" id="s_docType"><option>Service Invoice</option><option>Sales Invoice</option></select></label>
+          </div>
+          <label class="f">Invoice no.<input data-s="invoiceNo" id="s_invoiceNo"></label>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Client</legend>
+          <label class="f">Registered name<input data-s="client" id="s_client" list="clientList" autocomplete="off" placeholder="Start typing to pick a saved client"><datalist id="clientList"></datalist></label>
+          <label class="f">Client TIN<input data-s="tin" id="s_tin" list="clientTinList" autocomplete="off" placeholder="000-000-000-00000" inputmode="numeric"><datalist id="clientTinList"></datalist></label>
+          <label class="f">Address<input data-s="address" id="s_address"></label>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Amounts (pesos)</legend>
+          <div class="row">
+            <label class="f">Type of sale<select data-s="saleType" id="s_saleType"><option value="vatable">Vatable sale (12% VAT)</option><option value="zero">Zero-rated sale</option><option value="exempt">VAT-exempt sale</option><option value="nonvat">Not subject to VAT (I am non-VAT)</option></select></label>
+            <label class="f">Sale of<select data-s="saleOf" id="s_saleOf"><option value="services">Services</option><option value="goods">Goods</option></select></label>
+          </div>
+          <div class="row">
+            <label class="f"><span id="s_netLbl">Amount, excluding VAT</span><input type="number" step="0.01" min="0" inputmode="decimal" data-s="netAmount" id="s_netAmount" placeholder="0.00"></label>
+            <label class="f">VAT amount (12%, filled in for you)<input type="number" step="0.01" min="0" inputmode="decimal" data-s="vatAmount" id="s_vatAmount" placeholder="0.00"></label>
+          </div>
+          <div class="row">
+            <label class="f">Client withholds (EWT)<select data-s="ewtRate" id="s_ewtRate"><option value="0">None</option><option value="1">1%</option><option value="2">2%</option><option value="5">5%</option><option value="10">10%</option><option value="15">15%</option></select></label>
+            <label class="f">Withheld amount (filled in for you)<input type="number" step="0.01" min="0" inputmode="decimal" data-s="ewtAmount" id="s_ewtAmount" placeholder="0.00"></label>
+          </div>
+          <div class="derived">
+            <div><span>Total billed (amount + VAT)</span><b id="sTotal">0.00</b></div>
+            <div><span>Withheld by client (Form 2307)</span><b id="sEwt">0.00</b></div>
+            <div><span>Net amount to receive</span><b id="sDue">0.00</b></div>
+          </div>
+        </fieldset>
+        <fieldset style="margin-top:18px">
+          <legend>Details</legend>
+          <label class="f">Description of service or goods<input data-s="description" id="s_description" placeholder="Consulting fee for October"></label>
+        </fieldset>
+      </form>
+    </div>
+    <footer>
+      <button class="btn danger" id="saleDel" type="button">Delete</button>
+      <span class="grow"></span>
+      <button class="btn" id="saleCancel" type="button">Cancel</button>
+      <button class="btn primary" id="saleSave" type="button">Save invoice</button>
+    </footer>
+  </aside>
+</div>
 <div class="pin-wrap" id="pinSheet" hidden>
   <div class="pin-card" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
     <h2 id="pinTitle" style="margin:0 0 6px;font-size:18px">Enter PIN</h2>
@@ -442,12 +521,12 @@ service cloud.firestore {
 var $=function(s){return document.querySelector(s)};
 var LS_KEY='resibo.v1';
 var CATS=['Cost of goods / purchases','Office & supplies','Rent','Utilities (electricity, water)','Communication (internet, mobile)','Transportation & travel','Fuel & oil','Representation & entertainment','Professional fees','Repairs & maintenance','Advertising & promotion','Taxes, licenses & fees','Miscellaneous'];
-var DOCTYPES=['Sales Invoice','Official Receipt','Cash Invoice','Other'];
+var DOCTYPES=['Sales Invoice','Official Receipt','Cash Invoice','Service Invoice','Billing Invoice','Other'];
 var PTYPES=['goods','services','capital'];
 var state={receipts:[],settings:{name:'',tin:''}};
 var imgs={};
-var masterOn=false,masterRows=[];
-function srcRows(){return masterOn?masterRows:state.receipts}
+var masterOn=false,masterRows=[],curTab='p',lockMode='all';
+function srcRows(){return (masterOn?masterRows:state.receipts).filter(function(r){return r.kind!=='sale'})}
 var storageOK=true;
 var draft=null,isNew=false,lastFocus=null,delArmed=false;
 var queue=[],busy=false,qid=0;
@@ -464,8 +543,8 @@ function fmtTin(s){var d=String(s||'').replace(/\D/g,'');if(d.length<9)return St
 function validDate(d){return /^\d{4}-\d{2}-\d{2}$/.test(d||'')&&!isNaN(new Date(d+'T00:00:00'))}
 function qOf(d){return Math.ceil(Number(d.slice(5,7))/3)}
 function todayISO(){return new Date().toISOString().slice(0,10)}
-function syncPanelFlag(){document.body.classList.toggle('panel-open',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden)}
-function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden);t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
+function syncPanelFlag(){document.body.classList.toggle('panel-open',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden)}
+function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidden||!$('#camSheet').hidden||!$('#syncSheet').hidden||!$('#saleSheet').hidden);t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){t.hidden=true},3800)}
 
 /* ---------- model ---------- */
 function blank(){return {id:'',date:'',supplier:'',tin:'',address:'',invoiceNo:'',docType:'Sales Invoice',supplierVat:'VAT',buyerShown:false,
@@ -491,7 +570,7 @@ function flagsFor(r){
   if(r.claimVat&&!r.buyerShown)f.push(['warn','Claiming input VAT, but the receipt shows no buyer name and TIN.']);
   if(r.claimVat&&num(r.vatAmount)<=0)f.push(['warn','Claiming input VAT, but the VAT amount is zero.']);
   var key=digits>=9?String(r.tin).replace(/\D/g,''):'';
-  if(key&&r.invoiceNo&&state.receipts.some(function(o){return o.id!==r.id&&String(o.tin).replace(/\D/g,'')===key&&o.invoiceNo===r.invoiceNo}))f.push(['warn','Possible duplicate: same supplier and invoice number already saved.']);
+  if(key&&r.invoiceNo&&state.receipts.some(function(o){return o.kind!=='sale'&&o.id!==r.id&&String(o.tin).replace(/\D/g,'')===key&&o.invoiceNo===r.invoiceNo}))f.push(['warn','Possible duplicate: same supplier and invoice number already saved.']);
   if(total(r)<=0)f.push(['err','Total amount is zero.']);
   return f;
 }
@@ -571,11 +650,14 @@ function load(){
 }
 
 /* ---------- filters ---------- */
-function periodRows(){
+function periodRows(){return filt(srcRows())}
+function salesPeriod(){return filt(salesAll())}
+function filt(list,ignoreLock){
   var y=$('#fYear').value,q=$('#fQ').value;
   var by=$('#fBy').value;
-  return srcRows().filter(function(r){
+  return list.filter(function(r){
     if(masterOn&&by&&r.by!==by)return false;
+    if(!ignoreLock){if(lockMode==='locked'&&!r.locked)return false;if(lockMode==='open'&&r.locked)return false}
     if(!y&&!q)return true;
     if(!validDate(r.date))return false;
     if(y&&r.date.slice(0,4)!==y)return false;
@@ -601,7 +683,7 @@ function periodLabel(){
 /* ---------- render ---------- */
 function renderYears(){
   var sel=$('#fYear'),cur=sel.value,ys={};
-  srcRows().forEach(function(r){if(validDate(r.date))ys[r.date.slice(0,4)]=1});
+  (masterOn?masterRows:state.receipts).forEach(function(r){if(validDate(r.date))ys[r.date.slice(0,4)]=1});
   var list=Object.keys(ys).sort().reverse();
   sel.innerHTML='<option value="">All years</option>'+list.map(function(y){return '<option value="'+y+'">'+y+'</option>'}).join('');
   sel.value=list.indexOf(cur)>=0?cur:'';
@@ -637,14 +719,14 @@ function statusChip(r){
 var sel={};
 function selIds(){return Object.keys(sel).filter(function(k){return sel[k]})}
 function syncBulk(){
-  var shown=viewRows().map(function(r){return r._path||r.id}),n=0;
+  var shown=(curTab==='s'?salesView():viewRows()).map(function(r){return r._path||r.id}),n=0;
   Object.keys(sel).forEach(function(k){if(shown.indexOf(k)<0)delete sel[k]});
   n=selIds().length;
   $('#bulkBar').hidden=!n;$('#bulkCount').textContent=n+' selected';
-  var a=$('#selAll');a.checked=shown.length>0&&n===shown.length;a.indeterminate=n>0&&n<shown.length;
+  ['#selAll','#selAllS'].forEach(function(id){var a=$(id);a.checked=shown.length>0&&n===shown.length;a.indeterminate=n>0&&n<shown.length});
 }
 function bulkRun(lock){
-  var ids=selIds(),rows=srcRows().filter(function(r){return ids.indexOf(r._path||r.id)>=0});
+  var ids=selIds(),rows=(curTab==='s'?salesAll():srcRows()).filter(function(r){return ids.indexOf(r._path||r.id)>=0});
   var todo=rows.filter(function(r){return lock?!r.locked:(r.locked&&canUnlock(r))});
   if(!todo.length){toast(lock?'The selected receipts are already locked.':'Nothing to unlock. They are not locked, or only the master can unlock them.');return}
   var go=state.settings.pinHash?(lock?Promise.resolve(true):askExistingPin('Unlock '+todo.length+' receipt'+(todo.length>1?'s':''),'Enter your PIN.')):setNewPin('Create a PIN','You will need this PIN to unlock receipts later. Keep it safe.');
@@ -693,7 +775,8 @@ function renderQueue(){
     return '<li class="qi '+it.status+'"><img src="'+(it.isPdf?(it.thumb||PDF_ICON):it.url)+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
   }).join('');
 }
-function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();renderStats();renderNotices();renderTable();renderQueue()}
+function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();if(curTab==='s'){renderSales()}else{renderStats();renderNotices();renderTable()}renderQueue()}
+function refreshMain(){if(curTab==='s')renderSales();else{renderStats();renderNotices();renderTable()}}
 
 /* ---------- scanning (OCR runs in this browser) ---------- */
 var worker=null,workerPromise=null,engineFail='';
@@ -842,6 +925,8 @@ function parseReceiptText(text){
   o.supplierAddress=addr.join(', ');
   var blob=lines.join('\n');
   if(/official\s*receipt/i.test(blob)&&!/invoice/i.test(blob))o.documentType='Official Receipt';
+  else if(/service\s*invoice/i.test(blob))o.documentType='Service Invoice';
+  else if(/billing\s*invoice/i.test(blob))o.documentType='Billing Invoice';
   else if(/cash\s*invoice/i.test(blob))o.documentType='Cash Invoice';
   for(i=0;i<lines.length;i++){
     L=lines[i];
@@ -971,7 +1056,7 @@ async function scanPdf(file,progress,item){
 }
 function lookupSupplier(r){
   var key=String(r.tin||'').replace(/\D/g,'');if(key.length<9)return;
-  var m=state.receipts.filter(function(o){return o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
+  var m=state.receipts.filter(function(o){return o.kind!=='sale'&&o.source!=='example'&&String(o.tin||'').replace(/\D/g,'')===key&&o.reviewed}).sort(function(a,b){return (b.added||0)-(a.added||0)})[0];
   if(!m)return;
   r.supplier=m.supplier;if(m.address)r.address=m.address;r.category=m.category;r.purchaseType=m.purchaseType;
   if(m.description&&!r.description)r.description=m.description;
@@ -1256,7 +1341,7 @@ $('#lockBtn').onclick=function(){
   });
 };
 $('#cancelBtn').onclick=closeSheet;$('#closeSheet').onclick=closeSheet;$('#scrim').onclick=closeSheet;
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#sheet').hidden)closeSheet()}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#saleSheet').hidden)closeSale();else if(!$('#sheet').hidden)closeSheet()}});
 
 /* ---------- events ---------- */
 $('#f_category').innerHTML=CATS.map(function(c){return '<option>'+esc(c)+'</option>'}).join('');
@@ -1322,12 +1407,13 @@ $('#tbody').addEventListener('click',function(e){
   if(e.target.closest&&e.target.closest('td.sel'))return;
   var tr=e.target.closest('tr[data-id]');if(tr)openSheet(tr.dataset.id);
 });
-$('#selAll').onchange=function(){var on=this.checked;sel={};if(on)viewRows().forEach(function(r){sel[r._path||r.id]=true});Array.prototype.forEach.call(document.querySelectorAll('.rsel'),function(c){c.checked=on});syncBulk()};
+function selAllSet(on){sel={};if(on)(curTab==='s'?salesView():viewRows()).forEach(function(r){sel[r._path||r.id]=true});Array.prototype.forEach.call(document.querySelectorAll('.rsel'),function(c){c.checked=on});syncBulk()}
+$('#selAll').onchange=function(){selAllSet(this.checked)};$('#selAllS').onchange=function(){selAllSet(this.checked)};
 $('#bulkLock').onclick=function(){bulkRun(true)};$('#bulkUnlock').onclick=function(){bulkRun(false)};
 $('#bulkClear').onclick=function(){sel={};Array.prototype.forEach.call(document.querySelectorAll('.rsel'),function(c){c.checked=false});syncBulk()};
-['#fYear','#fQ'].forEach(function(s){$(s).addEventListener('change',function(){renderStats();renderNotices();renderTable()})});
-$('#fSearch').addEventListener('input',renderTable);
-$('#fBy').addEventListener('change',function(){renderStats();renderTable()});
+['#fYear','#fQ'].forEach(function(s){$(s).addEventListener('change',refreshMain)});
+$('#fSearch').addEventListener('input',refreshMain);
+$('#fBy').addEventListener('change',refreshMain);
 $('#tpName').addEventListener('input',function(e){state.settings.name=e.target.value;persist()});
 $('#tpTin').addEventListener('input',function(e){state.settings.tin=e.target.value;persist()});
 $('#tpTin').addEventListener('change',function(e){state.settings.tin=fmtTin(e.target.value);e.target.value=state.settings.tin;persist()});
@@ -1368,7 +1454,7 @@ function N(v,f){var c={t:'n',v:round2(v),z:'#,##0.00'};if(f)c.f=f;return c}
 function sheet(aoa,widths){var ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=widths.map(function(w){return {wch:w}});return ws}
 function colL(i){return XLSX.utils.encode_col(i)}
 
-function buildWorkbook(rows){
+function buildWorkbook(rows,srows){
   var tp=state.settings,label=periodLabel();
   var wb=XLSX.utils.book_new();
   var sorted=rows.slice().sort(function(a,b){return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0});
@@ -1441,16 +1527,372 @@ function buildWorkbook(rows){
   for(var c=1;c<=kl.length+1;c++){var s=0;for(var r2=s4-1;r2<a4.length;r2++){s+=Number(a4[r2][c].v)||0}tr4.push(N(s,a4.length>=s4?'SUM('+colL(c)+s4+':'+colL(c)+e4+')':null))}
   a4.push(tr4);
   XLSX.utils.book_append_sheet(wb,sheet(a4,[34].concat(kl.map(function(){return 14}),[16])),'ITR - By Category');
+  if(srows&&srows.length)addSalesSheets(wb,srows,rows);
   return wb;
 }
 $('#exportBtn').onclick=function(){
-  var rows=periodRows();
-  if(!rows.length){toast('There are no receipts in this period to export.');return}
+  var rows=periodRows(),srows=salesPeriod();
+  if(!rows.length&&!srows.length){toast('There is nothing in this period to export.');return}
   if(typeof XLSX==='undefined'){toast('The Excel library did not load. Check your connection and reload.');return}
   var out;
-  try{out=XLSX.write(buildWorkbook(rows),{bookType:'xlsx',type:'array'})}catch(e){toast('Could not build the workbook.');return}
+  try{out=XLSX.write(buildWorkbook(rows,srows),{bookType:'xlsx',type:'array'})}catch(e){toast('Could not build the workbook.');return}
   var y=$('#fYear').value||'all',q=$('#fQ').value;
   saveFile('resibo-'+y+(q?'-Q'+q:'')+'-'+todayISO()+'.xlsx',out,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+};
+
+/* ---------- sales invoices (what you issued to clients) ---------- */
+var sdraft=null,sIsNew=false,sDelArmed=false;
+function isSale(r){return !!r&&r.kind==='sale'}
+function salesAll(){return (masterOn?masterRows:state.receipts).filter(isSale)}
+function blankSale(){return {id:'',kind:'sale',date:'',docType:'Service Invoice',invoiceNo:'',client:'',tin:'',address:'',saleType:'vatable',saleOf:'services',netAmount:0,vatAmount:0,ewtRate:0,ewtAmount:0,description:'',reviewed:true,source:'manual',locked:false,lockedBy:'',lockedByMaster:false,added:Date.now()}}
+function saleTotal(r){return round2(num(r.netAmount)+num(r.vatAmount))}
+function saleDue(r){return round2(saleTotal(r)-num(r.ewtAmount))}
+function saleTypeLabel(t){return {vatable:'Vatable (12%)',zero:'Zero-rated',exempt:'VAT-exempt',nonvat:'Not subject to VAT'}[t]||'Vatable (12%)'}
+function salesView(){
+  var t=$('#fSearch').value.trim().toLowerCase(),rows=salesPeriod();
+  if(t)rows=rows.filter(function(r){return (r.client+' '+r.tin+' '+r.invoiceNo+' '+r.description).toLowerCase().indexOf(t)>=0});
+  return rows.slice().sort(function(a,b){var da=a.date||'9999',db=b.date||'9999';if(da!==db)return da<db?1:-1;return (b.added||0)-(a.added||0)});
+}
+function renderSales(){
+  $('#stbl').classList.toggle('master',masterOn);
+  var all=salesPeriod(),rows=salesView(),net=0,vat=0,tot=0,ewt=0,inp=0;
+  all.forEach(function(r){net+=num(r.netAmount);vat+=num(r.vatAmount);tot+=saleTotal(r);ewt+=num(r.ewtAmount)});
+  filt(srcRows(),true).forEach(function(r){inp+=claimed(r)});
+  $('#stats').innerHTML=
+    '<div><b>'+all.length+'</b><span>Invoices, '+esc(periodLabel())+'</span></div>'+
+    '<div><b>'+fmt(net)+'</b><span>Net sales</span></div>'+
+    '<div><b>'+fmt(vat)+'</b><span>Output VAT</span></div>'+
+    '<div><b>'+fmt(tot)+'</b><span>Total billed</span></div>'+
+    '<div><b>'+fmt(ewt)+'</b><span>Withheld by clients</span></div>'+
+    '<div><b>'+fmt(round2(vat-inp))+'</b><span>VAT payable (output minus input claimed)</span></div>';
+  $('#notices').innerHTML=masterOn?'<div class="master-note">Viewing sales invoices from all accounts. Open any row to edit it.</div>':'';
+  $('#sbody').innerHTML=rows.map(function(r){
+    var id=r._path||r.id;
+    return '<tr data-id="'+esc(id)+'">'+
+      '<td class="sel"><input type="checkbox" class="rsel" data-sel="'+esc(id)+'"'+(sel[id]?' checked':'')+' aria-label="Select invoice"></td>'+
+      '<td class="mono">'+esc(r.date||'No date')+'</td><td class="by sub">'+esc(r.by||'')+'</td>'+
+      '<td><div class="sup">'+esc(r.invoiceNo||'-')+(r.locked?'<span class="lk" title="Locked">🔒</span>':'')+'</div><div class="sub">'+esc(r.docType||'')+'</div></td>'+
+      '<td><div class="sup">'+esc(r.client||'(no client)')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
+      '<td class="num">'+fmt(r.netAmount)+'</td><td class="num">'+(num(r.vatAmount)>0?fmt(r.vatAmount):'-')+'</td><td class="num">'+fmt(saleTotal(r))+'</td><td class="num">'+(num(r.ewtAmount)>0?fmt(r.ewtAmount):'-')+'</td>'+
+      '<td><button class="btn sm" type="button" data-edit>Edit</button></td></tr>';
+  }).join('');
+  var n2=0,v2=0,t2=0,e2=0;rows.forEach(function(r){n2+=num(r.netAmount);v2+=num(r.vatAmount);t2+=saleTotal(r);e2+=num(r.ewtAmount)});
+  $('#stfoot').innerHTML=rows.length?'<tr><td colspan="5">Total shown</td><td class="num">'+fmt(n2)+'</td><td class="num">'+fmt(v2)+'</td><td class="num">'+fmt(t2)+'</td><td class="num">'+fmt(e2)+'</td><td></td></tr>':'';
+  $('#sempty').hidden=rows.length>0;
+  syncBulk();
+}
+function setTab(t){
+  curTab=t;sel={};
+  Array.prototype.forEach.call(document.querySelectorAll('#tabs button'),function(b){b.classList.toggle('on',b.dataset.tab===t)});
+  var s=t==='s';
+  $('#capSec').hidden=s;$('#pWrap').hidden=s;$('#sWrap').hidden=!s;$('#saleAddBtn').hidden=!s;
+  $('#ledgerTitle').textContent=s?'Sales invoices':'Receipts';
+  $('#fSearch').placeholder=s?'Client, TIN or invoice no.':'Supplier, TIN or invoice no.';
+  render();
+}
+$('#tabs').addEventListener('click',function(e){var b=e.target.closest('button[data-tab]');if(b)setTab(b.dataset.tab)});
+$('#lockSeg').addEventListener('click',function(e){
+  var b=e.target.closest('button[data-lm]');if(!b)return;
+  lockMode=b.dataset.lm;sel={};
+  Array.prototype.forEach.call(document.querySelectorAll('#lockSeg button'),function(x){x.classList.toggle('on',x===b)});
+  render();
+});
+$('#sbody').addEventListener('click',function(e){
+  if(e.target.classList&&e.target.classList.contains('rsel')){sel[e.target.dataset.sel]=e.target.checked;syncBulk();return}
+  if(e.target.closest&&e.target.closest('td.sel'))return;
+  var tr=e.target.closest('tr[data-id]');if(tr)openSale(tr.dataset.id);
+});
+$('#saleAddBtn').onclick=function(){if(masterOn){toast('Switch back to your own list to add sales invoices.');return}openSale(null)};
+
+function clientList(){
+  var map={};
+  salesAll().forEach(function(r){
+    if(!r.client&&!r.tin)return;
+    var key=tinKey(r.tin).length>=9?tinKey(r.tin):('n:'+String(r.client).trim().toLowerCase());
+    var cur=map[key],stamp=(r.date||'')+String(r.added||0);
+    if(!cur||stamp>cur.stamp)map[key]={stamp:stamp,client:r.client||'',tin:r.tin||'',address:r.address||'',saleOf:r.saleOf||'services',saleType:r.saleType||'vatable',ewtRate:num(r.ewtRate)};
+  });
+  return Object.keys(map).map(function(k){return map[k]}).sort(function(a,b){return a.client.localeCompare(b.client)});
+}
+function fillClientList(){
+  var l=clientList();
+  $('#clientList').innerHTML=l.filter(function(x){return x.client}).map(function(x){return '<option value="'+esc(x.client)+'">'+esc(x.tin||'no TIN')+'</option>'}).join('');
+  $('#clientTinList').innerHTML=l.filter(function(x){return x.tin}).map(function(x){return '<option value="'+esc(x.tin)+'">'+esc(x.client)+'</option>'}).join('');
+}
+function applyClient(by,val){
+  if(!sdraft)return false;
+  var v=String(val||'').trim().toLowerCase(),vk=tinKey(val);
+  var hit=clientList().filter(function(x){return by==='name'?(v&&x.client.trim().toLowerCase()===v):(vk.length>=9&&tinKey(x.tin)===vk)})[0];
+  if(!hit)return false;
+  if(by==='tin')sdraft.client=hit.client;else sdraft.tin=hit.tin;
+  sdraft.address=hit.address;sdraft.saleOf=hit.saleOf;sdraft.saleType=hit.saleType;sdraft.ewtRate=hit.ewtRate;sdraft._vat=false;sdraft._ewt=false;
+  autoSale('');fillSaleForm();updateSale();
+  return true;
+}
+function setS(k,v){var el=$('#s_'+k);if(!el)return;if(el.type==='number')el.value=num(v)?num(v):'';else el.value=v==null?'':String(v)}
+function fillSaleForm(){
+  Array.prototype.forEach.call(document.querySelectorAll('#saleForm [data-s]'),function(el){setS(el.dataset.s,sdraft[el.dataset.s])});
+}
+function autoSale(skip){
+  if(!sdraft._vat){sdraft.vatAmount=sdraft.saleType==='vatable'?round2(num(sdraft.netAmount)*0.12):0;if(skip!=='vatAmount')setS('vatAmount',sdraft.vatAmount)}
+  if(!sdraft._ewt){sdraft.ewtAmount=round2(num(sdraft.netAmount)*num(sdraft.ewtRate)/100);if(skip!=='ewtAmount')setS('ewtAmount',sdraft.ewtAmount)}
+}
+function saleFlags(r){
+  var f=[];
+  if(!validDate(r.date))f.push(['warn','Date is missing.']);
+  if(!r.invoiceNo)f.push(['warn','Invoice number is missing.']);
+  if(!r.client)f.push(['warn','Client registered name is missing.']);
+  else if(tinKey(r.tin).length<9)f.push(['warn','Client TIN is missing or too short.']);
+  if(num(r.netAmount)<=0)f.push(['err','The amount is zero.']);
+  if(r.invoiceNo&&salesAll().some(function(o){return o.id!==r.id&&o.invoiceNo===r.invoiceNo&&o.docType===r.docType}))f.push(['warn','Same document type and invoice number is already saved.']);
+  return f;
+}
+function updateSale(){
+  if(!sdraft)return;
+  $('#sTotal').textContent=fmt(saleTotal(sdraft));$('#sEwt').textContent=fmt(sdraft.ewtAmount);$('#sDue').textContent=fmt(saleDue(sdraft));
+  $('#s_netLbl').textContent=sdraft.saleType==='vatable'?'Amount, excluding VAT':'Amount';
+  var pv=$('#s_vatAmount');pv.placeholder=sdraft._vat?'0.00':fmt(sdraft.saleType==='vatable'?round2(num(sdraft.netAmount)*0.12):0);
+  var pe=$('#s_ewtAmount');pe.placeholder=sdraft._ewt?'0.00':fmt(round2(num(sdraft.netAmount)*num(sdraft.ewtRate)/100));
+  var f=saleFlags(sdraft);
+  $('#saleFlags').innerHTML=f.length?f.map(function(x){return '<li class="'+x[0]+'">'+esc(x[1])+'</li>'}).join(''):'<li class="good">Nothing to fix.</li>';
+  applySaleLock();
+}
+function applySaleLock(){
+  var r=sdraft||{},lk=!!r.locked;
+  Array.prototype.forEach.call(document.querySelectorAll('#saleForm input,#saleForm select'),function(el){el.disabled=lk});
+  if(!lk)$('#s_vatAmount').disabled=r.saleType!=='vatable';
+  $('#saleSave').hidden=lk;$('#saleDel').hidden=lk||sIsNew;
+  $('#saleLockBtn').textContent=lk?'🔓 Unlock invoice':'🔒 Lock invoice';
+  $('#saleLockBtn').disabled=lk&&!canUnlock(r);
+  var n=$('#saleLockNote');
+  if(lk){n.hidden=false;n.textContent='This invoice is locked'+(r.lockedBy?' by '+r.lockedBy:'')+'. It cannot be edited or deleted until it is unlocked with the PIN.'+(canUnlock(r)?'':' Only the master account can unlock it.')}
+  else n.hidden=true;
+}
+function openSale(id){
+  var ex=id?salesAll().find(function(r){return (r._path||r.id)===id}):null;
+  sIsNew=!ex;sDelArmed=false;$('#saleDel').textContent='Delete';
+  sdraft=ex?Object.assign({},ex):Object.assign(blankSale(),{id:uid()});
+  sdraft._vat=!!ex&&sdraft.saleType==='vatable'&&Math.abs(num(sdraft.vatAmount)-round2(num(sdraft.netAmount)*0.12))>0.02;
+  sdraft._ewt=!!ex&&Math.abs(num(sdraft.ewtAmount)-round2(num(sdraft.netAmount)*num(sdraft.ewtRate)/100))>0.02;
+  fillSaleForm();fillClientList();updateSale();
+  $('#saleTitle').textContent=sIsNew?'New sales invoice':(masterOn?'Edit invoice from '+(ex.by||'an account'):'Edit sales invoice');
+  $('#saleSheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
+  setTimeout(function(){$('#s_date').focus({preventScroll:true})},30);
+}
+function closeSale(){$('#saleSheet').hidden=true;document.body.style.overflow='';sdraft=null;syncPanelFlag()}
+$('#saleForm').addEventListener('input',function(e){
+  var t=e.target,k=t.dataset&&t.dataset.s;if(!k||!sdraft)return;
+  if(k==='vatAmount'){if(t.value===''){sdraft._vat=false}else{sdraft._vat=true;sdraft.vatAmount=num(t.value)}}
+  else if(k==='ewtAmount'){if(t.value===''){sdraft._ewt=false}else{sdraft._ewt=true;sdraft.ewtAmount=num(t.value)}}
+  else if(k==='netAmount'){sdraft.netAmount=num(t.value)}
+  else if(k==='ewtRate'){sdraft.ewtRate=num(t.value);sdraft._ewt=false}
+  else if(k==='saleType'){sdraft.saleType=t.value;sdraft._vat=false}
+  else sdraft[k]=t.value;
+  autoSale(k);updateSale();
+});
+$('#saleForm').addEventListener('change',function(e){
+  var t=e.target,k=t.dataset&&t.dataset.s;if(!k||!sdraft)return;
+  if(k==='client'&&applyClient('name',t.value))toast('Filled in from your saved client.');
+  if(k==='tin'){sdraft.tin=fmtTin(t.value);t.value=sdraft.tin;if(applyClient('tin',t.value))toast('Filled in from your saved client.');updateSale()}
+});
+$('#saleSave').onclick=function(){
+  if(!sdraft||sdraft.locked)return;
+  var r=Object.assign({},sdraft);delete r._vat;delete r._ewt;
+  r.client=String(r.client||'').trim();r.invoiceNo=String(r.invoiceNo||'').trim();r.tin=fmtTin(r.tin);r.kind='sale';r.reviewed=true;
+  if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);closeSale();toast('Saved to '+(r.by||'the account')+' list.');return}
+  commitReceipt(r);closeSale();toast(sIsNew?'Sales invoice added.':'Sales invoice saved.');
+};
+$('#saleDel').onclick=function(){
+  if(!sdraft||sdraft.locked)return;
+  if(!sDelArmed){sDelArmed=true;this.textContent='Confirm delete';return}
+  if(masterOn&&window.__rsbMasterDelete){window.__rsbMasterDelete(sdraft._path);closeSale();toast('Sales invoice deleted.');return}
+  var id=sdraft.id;state.receipts=state.receipts.filter(function(r){return r.id!==id});
+  persist();closeSale();render();toast('Sales invoice deleted.');
+};
+$('#saleLockBtn').onclick=function(){
+  if(!sdraft)return;
+  var r=Object.assign({},sdraft);delete r._vat;delete r._ewt;
+  if(r.locked){
+    if(!canUnlock(r)){toast('Only the master account can unlock this invoice.');return}
+    var chain=state.settings.pinHash?askExistingPin('Unlock invoice','Enter your PIN to unlock and edit this invoice.'):Promise.resolve(true);
+    chain.then(function(ok){
+      if(!ok)return;
+      r.locked=false;r.lockedBy='';r.lockedByMaster=false;commitReceipt(r);
+      sdraft=Object.assign({},r,{_vat:sdraft._vat,_ewt:sdraft._ewt});sIsNew=false;updateSale();toast('Invoice unlocked. You can edit it now.');
+    });
+    return;
+  }
+  var go=state.settings.pinHash?Promise.resolve(true):setNewPin('Create a PIN','You will need this PIN to unlock invoices and receipts later. Keep it safe.');
+  go.then(function(ok){
+    if(!ok)return;
+    r.client=String(r.client||'').trim();r.invoiceNo=String(r.invoiceNo||'').trim();r.tin=fmtTin(r.tin);r.kind='sale';r.reviewed=true;
+    r.locked=true;r.lockedByMaster=!!masterOn;r.lockedBy=(window.__rsbUser&&window.__rsbUser())||'this device';
+    commitReceipt(r);closeSale();toast('Invoice locked. A PIN is needed to unlock it.');
+  });
+};
+$('#saleCancel').onclick=closeSale;$('#saleClose').onclick=closeSale;$('#saleScrim').onclick=closeSale;
+
+/* ---------- Excel: sales sheets for the export ---------- */
+function addSalesSheets(wb,srows,prows){
+  var tp=state.settings,label=periodLabel();
+  var sorted=srows.slice().sort(function(a,b){return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0});
+  var qk=function(r){return validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date'};
+  var h=['Date','Quarter','Document','Invoice no.','Client','Client TIN','Client address','Sale of','Type of sale','Net sales','Output VAT','Total billed','Withheld (Form 2307)','Net amount due','Description','Locked','Encoded by'];
+  var a=[[C('SALES INVOICES ISSUED')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],h.map(C)];
+  var s1=a.length+1;
+  sorted.forEach(function(r){a.push([C(r.date),C(qk(r)),C(r.docType),C(r.invoiceNo),C(r.client),C(r.tin),C(r.address),C(r.saleOf==='goods'?'Goods':'Services'),C(saleTypeLabel(r.saleType)),N(r.netAmount),N(r.vatAmount),N(saleTotal(r)),N(r.ewtAmount),N(saleDue(r)),C(r.description),C(r.locked?'Yes':'No'),C(r.by||'')])});
+  var e1=s1+sorted.length-1,t=[C('TOTAL')];
+  for(var i=1;i<9;i++)t.push(C(''));
+  for(var c=9;c<=13;c++){var sum=0;for(var k=0;k<sorted.length;k++){sum+=Number(a[s1-1+k][c].v)||0}t.push(N(sum,sorted.length?'SUM('+colL(c)+s1+':'+colL(c)+e1+')':null))}
+  a.push(t);
+  XLSX.utils.book_append_sheet(wb,sheet(a,[12,10,16,14,30,18,34,10,18,14,12,14,16,14,30,8,28]),'Sales - Invoices');
+  var sv=[0,0],gv=[0,0],zr=0,ex=0,nv=0,inp=0;
+  srows.forEach(function(r){var n=num(r.netAmount);
+    if(r.saleType==='vatable'){var x=r.saleOf==='goods'?gv:sv;x[0]+=n;x[1]+=num(r.vatAmount)}
+    else if(r.saleType==='zero')zr+=n;else if(r.saleType==='exempt')ex+=n;else nv+=n});
+  prows.forEach(function(r){inp+=claimed(r)});
+  var b=[[C('2550Q OUTPUT TAX WORKSHEET')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],
+    [C('Item'),C('Net sales'),C('Output VAT')],
+    [C('Vatable sales, services'),N(sv[0]),N(sv[1])],
+    [C('Vatable sales, goods'),N(gv[0]),N(gv[1])],
+    [C('Zero-rated sales'),N(zr),C('')],
+    [C('VAT-exempt sales'),N(ex),C('')],
+    [C('Sales not subject to VAT (non-VAT)'),N(nv),C('')],
+    [C('Total sales and output VAT'),N(sv[0]+gv[0]+zr+ex+nv,'SUM(B7:B11)'),N(sv[1]+gv[1],'SUM(C7:C11)')],
+    [],
+    [C('Less: input VAT claimed (from your purchases)'),C(''),N(inp)],
+    [C('VAT payable (a negative number is excess input VAT)'),C(''),N(sv[1]+gv[1]-inp,'C12-C14')],
+    [],[C('Check against your 2550Q. Input VAT carried over from earlier quarters is not included.')]];
+  XLSX.utils.book_append_sheet(wb,sheet(b,[52,18,16]),'VAT - 2550Q Output Tax');
+  var keys={};srows.forEach(function(r){keys[qk(r)]=1});
+  var kl=Object.keys(keys).sort();
+  var d=[[C('SALES INCOME FOR THE INCOME TAX RETURN (VAT excluded)')],[C('Period'),C(label)],[],[C('Period'),C('Services'),C('Goods'),C('Total income'),C('Withheld (Form 2307)')]];
+  var s5=d.length+1;
+  kl.forEach(function(k){var sv2=0,gv2=0,ew=0;srows.forEach(function(r){if(qk(r)!==k)return;var n=num(r.netAmount);if(r.saleOf==='goods')gv2+=n;else sv2+=n;ew+=num(r.ewtAmount)});
+    var ri=d.length+1;d.push([C(k),N(sv2),N(gv2),N(sv2+gv2,'B'+ri+'+C'+ri),N(ew)])});
+  var tr=[C('TOTAL')];
+  for(var c2=1;c2<=4;c2++){var sm=0;for(var q=s5-1;q<d.length;q++){sm+=Number(d[q][c2].v)||0}tr.push(N(sm,kl.length?'SUM('+colL(c2)+s5+':'+colL(c2)+(s5+kl.length-1)+')':null))}
+  d.push(tr);
+  XLSX.utils.book_append_sheet(wb,sheet(d,[22,16,16,18,20]),'ITR - Sales Income');
+}
+
+/* ---------- Excel import (entries you already typed in a spreadsheet) ---------- */
+var PCOLS=['Date','Document type','Invoice no.','Supplier name','Supplier TIN','Supplier address','VAT registration','Amount (VAT excluded)','VAT amount','Exempt amount','Zero-rated amount','Claim input VAT','Purchase type','Expense category','Description','Business purpose'];
+var SCOLS=['Date','Document type','Invoice no.','Client name','Client TIN','Client address','Sale type','Sale of','Amount (VAT excluded)','VAT amount','Withholding rate %','Withholding amount','Description'];
+var PAL={date:['date','invoicedate','transactiondate','dateofinvoice'],docType:['documenttype','doctype','document','invoicetype'],invoiceNo:['invoiceno','invoicenumber','invoice','orno','ornumber','sino','sinumber','referenceno','reference','receiptno'],
+  supplier:['suppliername','supplier','registeredname','vendor','vendorname','payee','nameofsupplier'],tin:['suppliertin','tin','vendortin','tinofsupplier'],address:['supplieraddress','address'],
+  supplierVat:['vatregistration','registration','vatstatus','suppliervat','vatornonvat','suppliertype'],
+  net:['amountvatexcluded','amountnetofvat','netamount','netvatable','vatablepurchases','vatableamount','amountexcludingvat','netpurchase','amount'],
+  vat:['vatamount','vat','inputvat','inputvatamount'],exempt:['exemptamount','exempt','exemptpurchases','vatexempt'],zero:['zeroratedamount','zerorated','zeroratedpurchases'],
+  claim:['claiminputvat','claimvat','claim'],ptype:['purchasetype','typeofpurchase','goodsorservices','goodsservices'],category:['expensecategory','category'],
+  description:['description','particulars','whatwasbought','items','details'],purpose:['businesspurpose','purpose']};
+var SAL={date:PAL.date,docType:PAL.docType,invoiceNo:PAL.invoiceNo,
+  client:['clientname','client','customer','customername','registeredname','billedto','nameofclient'],tin:['clienttin','customertin','tin'],address:['clientaddress','customeraddress','address'],
+  saleType:['saletype','vattype','vatstatus','typeofsale'],saleOf:['saleof','serviceorgoods','servicesorgoods','goodsorservices','nature'],
+  net:['amountvatexcluded','amountnetofvat','netamount','netsales','vatablesales','amountexcludingvat','servicefee','fee','amount'],
+  vat:['vatamount','vat','outputvat'],ewtRate:['withholdingrate','ewtrate','withholdingtaxrate','ewt','rate'],
+  ewtAmount:['withholdingamount','ewtamount','withholdingtax','taxwithheld','creditablewithholdingtax'],description:['description','particulars','details','items','services']};
+function hnorm(h){return String(h==null?'':h).toLowerCase().replace(/[^a-z0-9]/g,'')}
+function mapHeader(row,al){
+  var map={},used={},hits=0;
+  Object.keys(al).forEach(function(f){
+    for(var c=0;c<row.length;c++){if(used[c])continue;if(al[f].indexOf(hnorm(row[c]))>=0){map[f]=c;used[c]=1;hits++;break}}
+  });
+  return {map:map,hits:hits};
+}
+function xnum(v){return typeof v==='number'?v:num(v)}
+function isoD(y,m,d){y=+y;m=+m;d=+d;if(m<1||m>12||d<1||d>31||y<1990||y>2100)return '';return y+'-'+('0'+m).slice(-2)+'-'+('0'+d).slice(-2)}
+function xdate(v){
+  if(v==null||v==='')return '';
+  if(v instanceof Date&&!isNaN(v))return isoD(v.getFullYear(),v.getMonth()+1,v.getDate());
+  if(typeof v==='number'&&v>20000&&v<80000)return new Date(Math.round((v-25569)*86400)*1000).toISOString().slice(0,10);
+  var s=String(v).trim(),m;
+  if((m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)))return isoD(m[1],m[2],m[3]);
+  if((m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/))){var a=+m[1],b=+m[2],y=+m[3];if(y<100)y+=2000;if(a>12){var t=a;a=b;b=t}return isoD(y,a,b)}
+  var d2=new Date(s);if(!isNaN(d2))return isoD(d2.getFullYear(),d2.getMonth()+1,d2.getDate());
+  return '';
+}
+function yes(v){return /^(y|yes|true|1|x|oo)/i.test(String(v==null?'':v).trim())}
+function importRows(aoa,kind){
+  var al=kind==='s'?SAL:PAL,best=null,bi=-1;
+  for(var i=0;i<Math.min(aoa.length,15);i++){var h=mapHeader(aoa[i]||[],al);if(!best||h.hits>best.hits){best=h;bi=i}}
+  if(!best||best.hits<3||best.map.net==null)return {error:'columns'};
+  var m=best.map,g=function(row,f){return m[f]==null?'':row[m[f]]};
+  var out=[],blank0=0,noDate=0,noClaim=0;
+  for(var r=bi+1;r<aoa.length;r++){
+    var row=aoa[r]||[];
+    var nm=String(g(row,kind==='s'?'client':'supplier')||'').trim(),inv=String(g(row,'invoiceNo')||'').trim(),net=xnum(g(row,'net'));
+    if(!nm&&!inv&&!net){blank0++;continue}
+    var date=xdate(g(row,'date'));if(!date)noDate++;
+    var dt=String(g(row,'docType')||'').trim().toLowerCase();
+    var vatRaw=g(row,'vat'),vatGiven=!(vatRaw===''||vatRaw==null);
+    if(kind==='s'){
+      var st=String(g(row,'saleType')||'').toLowerCase(),type=/zero/.test(st)?'zero':/exempt/.test(st)?'exempt':/non|not subject/.test(st)?'nonvat':'vatable';
+      var doc=/service/.test(dt)?'Service Invoice':(dt?'Sales Invoice':'Service Invoice');
+      var so=String(g(row,'saleOf')||'').toLowerCase();
+      var of=/good|suppl|product|item/.test(so)?'goods':(/serv/.test(so)?'services':(doc==='Service Invoice'?'services':'goods'));
+      var rate=xnum(g(row,'ewtRate'));if(rate>0&&rate<1)rate=round2(rate*100);
+      var vat=type==='vatable'?(vatGiven?round2(xnum(vatRaw)):round2(net*0.12)):0;
+      var ewtRaw=g(row,'ewtAmount'),ewt=(ewtRaw===''||ewtRaw==null)?round2(net*rate/100):round2(xnum(ewtRaw));
+      var rec=Object.assign(blankSale(),{id:uid(),date:date,docType:doc,invoiceNo:inv,client:nm,tin:fmtTin(g(row,'tin')),address:String(g(row,'address')||'').trim(),saleType:type,saleOf:of,netAmount:round2(net),vatAmount:vat,ewtRate:rate,ewtAmount:ewt,description:String(g(row,'description')||'').trim(),source:'import'});
+      out.push(rec);
+    }else{
+      var sv=String(g(row,'supplierVat')||'').toLowerCase(),nonvat=/non/.test(sv);
+      var docs=DOCTYPES.filter(function(d){return d.toLowerCase()===dt})[0]||(dt?(/service/.test(dt)?'Service Invoice':/billing/.test(dt)?'Billing Invoice':/receipt|^or/.test(dt)?'Official Receipt':/cash/.test(dt)?'Cash Invoice':'Other'):'Sales Invoice');
+      var ex=round2(xnum(g(row,'exempt'))),zr=round2(xnum(g(row,'zero'))),gross=0,vatA=0;
+      if(nonvat){ex=round2(ex+net)}else{vatA=vatGiven?round2(xnum(vatRaw)):round2(net*0.12);gross=round2(net+vatA)}
+      var cl=g(row,'claim'),claim=!nonvat&&vatA>0&&yes(cl);if(cl===''||cl==null)noClaim++;
+      var pt=String(g(row,'ptype')||'').toLowerCase(),ptype=/serv/.test(pt)?'services':/capital/.test(pt)?'capital':'goods';
+      var cat=String(g(row,'category')||'').trim().toLowerCase(),cats=CATS.filter(function(c){return c.toLowerCase()===cat})[0]||'Miscellaneous';
+      var rr=blank();
+      Object.assign(rr,{id:uid(),date:date,docType:docs,invoiceNo:inv,supplier:nm,tin:fmtTin(g(row,'tin')),address:String(g(row,'address')||'').trim(),supplierVat:nonvat?'NON-VAT':'VAT',buyerShown:claim,grossVatable:gross,vatAmount:vatA,exempt:ex,zeroRated:zr,printedTotal:0,description:String(g(row,'description')||'').trim(),category:cats,purchaseType:ptype,purpose:String(g(row,'purpose')||'').trim(),claimVat:claim,reviewed:true,source:'import'});
+      out.push(rr);
+    }
+  }
+  return {rows:out,blank:blank0,noDate:noDate,noClaim:noClaim};
+}
+function dupKey(r){return isSale(r)?['s',String(r.docType),String(r.invoiceNo).trim().toLowerCase(),tinKey(r.tin)||String(r.client).trim().toLowerCase()].join('|'):['p',String(r.invoiceNo).trim().toLowerCase(),tinKey(r.tin)||String(r.supplier).trim().toLowerCase()].join('|')}
+function doImport(aoa,kind){
+  var res=importRows(aoa,kind);
+  if(res.error){toast('Could not find the columns. Download the Excel template, copy your entries into it, and import again.');return null}
+  var have={};state.receipts.forEach(function(r){have[dupKey(r)]=1});
+  var added=0,dups=0;
+  res.rows.forEach(function(r){
+    if(r.invoiceNo&&have[dupKey(r)]){dups++;return}
+    have[dupKey(r)]=1;state.receipts.push(r);added++;
+  });
+  persist();render();
+  var msg=added+' '+(kind==='s'?'sales invoice':'receipt')+(added===1?'':'s')+' imported'+(dups?', '+dups+' already saved and skipped':'')+(res.noDate?'. '+res.noDate+' had no readable date, so fill those in':'')+'.';
+  if(kind!=='s'&&res.noClaim)msg+=' Input VAT was not claimed for '+res.noClaim+' rows with no Yes/No answer.';
+  toast(msg);
+  return {added:added,dups:dups,res:res};
+}
+window.__rsbImport=doImport;
+$('#xlsIn').onchange=function(e){
+  var f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+  if(masterOn){toast('Switch back to your own list to import entries.');return}
+  if(typeof XLSX==='undefined'){toast('The Excel library did not load. Check your connection and reload.');return}
+  var kind=curTab==='s'?'s':'p';
+  f.arrayBuffer().then(function(buf){
+    var wb=XLSX.read(buf,{type:'array'}),names=wb.SheetNames,pick=names[0];
+    names.forEach(function(n){var l=n.toLowerCase();if(kind==='s'?/sale|invoice/.test(l):/purchase|receipt|expense/.test(l)){if(pick===names[0]&&!(kind==='s'?/sale|invoice/.test(names[0].toLowerCase()):/purchase|receipt|expense/.test(names[0].toLowerCase())))pick=n}});
+    var aoa=XLSX.utils.sheet_to_json(wb.Sheets[pick],{header:1,raw:true,defval:''});
+    doImport(aoa,kind);
+  }).catch(function(){toast('Could not read that file. Use an .xlsx, .xls or .csv file.')});
+};
+$('#tplBtn').onclick=function(){
+  if(typeof XLSX==='undefined'){toast('The Excel library did not load. Check your connection and reload.');return}
+  var s=curTab==='s',wb=XLSX.utils.book_new();
+  var cols=s?SCOLS:PCOLS;
+  var sample=s?['2026-10-05','Service Invoice','0001','XYZ Corporation','111-222-333-000','Makati City','Vatable','Services',10000,'',2,'','Consulting fee']:
+    ['2026-10-05','Sales Invoice','00012345','ABC Hardware Trading','123-456-789-000','Pasig City','VAT',1000,'',0,0,'Yes','goods','Repairs & maintenance','Paint and brushes','Office repair'];
+  var ws=XLSX.utils.aoa_to_sheet([cols,sample]);ws['!cols']=cols.map(function(c){return {wch:Math.max(14,c.length+2)}});
+  XLSX.utils.book_append_sheet(wb,ws,s?'Sales':'Purchases');
+  var help=s?[['How to fill this in'],['One row per invoice. Delete the sample row first.'],['Date: 2026-10-05 or 10/05/2026'],['Document type: Service Invoice or Sales Invoice'],['Sale type: Vatable, Zero-rated, VAT-exempt or Non-VAT'],['Sale of: Services or Goods'],['Amount (VAT excluded): the amount before 12% VAT'],['VAT amount: leave blank to compute 12% for you'],['Withholding rate %: 1, 2, 5, 10 or 15 if the client withholds (Form 2307)'],['Withholding amount: leave blank to compute from the rate']]:
+    [['How to fill this in'],['One row per receipt. Delete the sample row first.'],['Date: 2026-10-05 or 10/05/2026'],['Document type: Sales Invoice, Official Receipt, Cash Invoice, Service Invoice, Billing Invoice or Other'],['VAT registration: VAT or Non-VAT (the supplier)'],['Amount (VAT excluded): the amount before 12% VAT. For a non-VAT supplier, put the total paid.'],['VAT amount: leave blank to compute 12% for you'],['Claim input VAT: Yes only if the receipt shows your business name and TIN. Blank means No.'],['Purchase type: goods, services or capital'],['Expense category: '+CATS.join(' | ')]];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(help),'Instructions');
+  var out;try{out=XLSX.write(wb,{bookType:'xlsx',type:'array'})}catch(e){toast('Could not build the template.');return}
+  saveFile(s?'resibo-sales-template.xlsx':'resibo-purchases-template.xlsx',out,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 };
 
 /* ---------- boot ---------- */
