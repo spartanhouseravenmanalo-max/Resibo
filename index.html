@@ -139,7 +139,13 @@ tbody tr:hover{background:var(--surface2)}
 tbody tr.is-review td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
 .sup{font-weight:500}
+.pin-wrap{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px}
+.pin-wrap[hidden]{display:none}
+.pin-card{background:var(--surface,#fff);color:inherit;border-radius:14px;padding:18px;width:100%;max-width:340px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.pin-card input{padding:10px 12px;font-size:18px;letter-spacing:.3em;text-align:center;border:1px solid #bbb;border-radius:8px;background:#fff;color:#111}
 .lock-note{margin:0 0 14px;padding:10px 12px;border-radius:10px;background:#fff4d6;color:#6b4b00;font-size:14px;line-height:1.4}
+figure img.big{max-height:none}
+figure img{cursor:zoom-in}
 .lk{display:inline-block;margin-left:6px;font-size:12px;opacity:.8}
 .sub{font-size:12.5px;color:var(--muted)}
 .chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:500;white-space:nowrap}
@@ -281,7 +287,8 @@ body.panel-open #installBtn{display:none!important}
   <aside class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
     <header><h2 id="sheetTitle">Receipt</h2><button class="icon" id="closeSheet" type="button" aria-label="Close">&times;</button></header>
     <div class="panel-body">
-      <figure id="shot" hidden><img id="shotImg" alt="Receipt photo"><figcaption>This photo is only kept while the page is open.</figcaption></figure>
+      <figure id="shot" hidden><img id="shotImg" alt="Receipt photo" title="Tap to enlarge"><figcaption>Photo attached to this receipt. Tap it to enlarge.</figcaption></figure>
+      <div id="photoBar" style="display:flex;gap:8px;flex-wrap:wrap"><label class="btn sm" id="photoAdd" style="cursor:pointer">Attach photo<input type="file" accept="image/*" id="photoFile" hidden></label><button class="btn sm" id="photoDel" type="button" hidden>Remove photo</button></div>
       <ul class="flags" id="flags"></ul>
       <details id="ocrBox" class="tp" hidden><summary>Text read from the photo</summary><pre id="ocrText" style="white-space:pre-wrap;font:12px/1.4 var(--f-mono);margin:8px 0 0;max-height:220px;overflow:auto"></pre></details>
       <div id="lockNote" class="lock-note" hidden></div>
@@ -359,6 +366,21 @@ body.panel-open #installBtn{display:none!important}
       <button class="btn primary" id="camShot" type="button">Capture</button>
     </footer>
   </aside>
+</div>
+<div class="pin-wrap" id="pinSheet" hidden>
+  <div class="pin-card" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+    <h2 id="pinTitle" style="margin:0 0 6px;font-size:18px">Enter PIN</h2>
+    <p id="pinMsg" class="muted" style="margin:0 0 12px;font-size:14px"></p>
+    <input id="pin1" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" style="width:100%;margin-bottom:8px">
+    <input id="pin2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Repeat PIN" style="width:100%;margin-bottom:8px" hidden>
+    <div id="pinErr" style="color:#b3261e;font-size:13px;min-height:18px"></div>
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:6px">
+      <button class="btn sm" id="pinForgot" type="button" hidden>Forgot PIN?</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="pinCancel" type="button">Cancel</button>
+      <button class="btn primary" id="pinOk" type="button">OK</button>
+    </div>
+  </div>
 </div>
 <div class="sheet" id="syncSheet" hidden>
   <div class="scrim" id="syncScrim"></div>
@@ -492,15 +514,40 @@ function fromScan(j){
 }
 
 /* ---------- storage ---------- */
+/* ---------- photos kept with each receipt (IndexedDB locally, receipt document in the cloud) ---------- */
+var phSaved={};
+function phOpen(){return new Promise(function(res){try{var q=indexedDB.open('resibo-photos',1);q.onupgradeneeded=function(){q.result.createObjectStore('p')};q.onsuccess=function(){res(q.result)};q.onerror=function(){res(null)}}catch(e){res(null)}})}
+function phPut(id,data){phOpen().then(function(d){if(!d)return;try{d.transaction('p','readwrite').objectStore('p').put(data,id)}catch(e){}})}
+function phDel(id){phOpen().then(function(d){if(!d)return;try{d.transaction('p','readwrite').objectStore('p').delete(id)}catch(e){}})}
+function phAll(){return phOpen().then(function(d){return new Promise(function(res){
+  if(!d)return res({});var out={};
+  try{var q=d.transaction('p').objectStore('p').openCursor();q.onsuccess=function(){var c=q.result;if(c){out[c.key]=c.value;c.continue()}else res(out)};q.onerror=function(){res(out)}}catch(e){res(out)}
+})})}
+function shrinkImg(src,max,q){
+  return new Promise(function(res,rej){
+    var im=new Image();
+    im.onload=function(){
+      var sc=Math.min(1,(max||1100)/Math.max(im.naturalWidth,im.naturalHeight)),c=document.createElement('canvas');
+      c.width=Math.max(1,Math.round(im.naturalWidth*sc));c.height=Math.max(1,Math.round(im.naturalHeight*sc));
+      var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
+      res(c.toDataURL('image/jpeg',q||0.6));
+    };
+    im.onerror=function(){rej(new Error('image'))};im.src=src;
+  });
+}
 function persist(){
-  try{localStorage.setItem(LS_KEY,JSON.stringify(state));storageOK=true}catch(e){storageOK=false}
+  try{
+    var lite=Object.assign({},state,{receipts:state.receipts.map(function(r){if(!r.photo)return r;var c=Object.assign({},r);delete c.photo;return c})});
+    localStorage.setItem(LS_KEY,JSON.stringify(lite));storageOK=true;
+  }catch(e){storageOK=false}
+  state.receipts.forEach(function(r){if(r.photo&&phSaved[r.id]!==r.photo.length){phSaved[r.id]=r.photo.length;phPut(r.id,r.photo)}else if(!r.photo&&phSaved[r.id]){delete phSaved[r.id];phDel(r.id)}});
   if(window.__rsbPush)window.__rsbPush();
 }
 function load(){
   var raw=null;
   try{raw=localStorage.getItem(LS_KEY)}catch(e){storageOK=false}
   if(raw){
-    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:''},s.settings||{});return}}catch(e){}
+    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:''},s.settings||{});return}}catch(e){}
   }
   var ex=blank();
   Object.assign(ex,{id:uid(),date:'2024-03-24',supplier:'Hard Discount Philippines, Inc.',tin:'748-940-479-00378',
@@ -581,7 +628,7 @@ function renderTable(){
     var vatNote=num(r.vatAmount)>0?'<div class="sub" style="font-family:var(--f-body)">'+(r.claimVat?'claimed':'not claimed')+'</div>':'';
     return '<tr data-id="'+esc(r._path||r.id)+'" class="'+(r.reviewed?'':'is-review')+'">'+
       '<td class="mono">'+esc(r.date||'No date')+'</td>'+'<td class="by sub">'+esc(r.by||'')+'</td>'+
-      '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+(r.locked?'<span class="lk" title="Locked">\uD83D\uDD12</span>':'')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
+      '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+(r.locked?'<span class="lk" title="Locked">\uD83D\uDD12</span>':'')+(r.photo?'<span class="lk" title="Photo attached">\uD83D\uDCCE</span>':'')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
       '<td class="mono">'+esc(r.invoiceNo||'-')+'</td>'+
       '<td class="num">'+fmt(total(r))+'</td>'+
       '<td class="num">'+(num(r.vatAmount)>0?fmt(r.vatAmount):'-')+vatNote+'</td>'+
@@ -921,7 +968,7 @@ async function processQueue(){
           var j=pg.parsed;
           if(!j.printedTotal&&!j.supplierTin&&!j.invoiceNo&&!j.printedVatableSales){skipped++;return}
           var r=fromScan(j);r.id=uid();r.ocrNotes=j.notes.slice();if(res.pages.length>1)r.ocrNotes.unshift('Read from page '+pg.n+' of '+it.file.name+'.');
-          r.ocrText=String(j._text||'').slice(0,6000);lookupSupplier(r);imgs[r.id]=pg.img;
+          r.ocrText=String(j._text||'').slice(0,6000);lookupSupplier(r);imgs[r.id]=pg.img;r.photo=pg.img;
           state.receipts.push(r);made++;if(!it.rid)it.rid=r.id;
         });
         if(!made)throw {code:'pdfempty'};
@@ -939,6 +986,7 @@ async function processQueue(){
       var r=fromScan(j);r.id=uid();r.ocrNotes=j.notes.slice();r.ocrText=String(j._text||'').slice(0,6000);
       lookupSupplier(r);
       imgs[r.id]=it.url;state.receipts.push(r);persist();it.status='done';it.rid=r.id;render();
+      (function(rr){shrinkImg(it.url).then(function(d){rr.photo=d;imgs[rr.id]=d;persist();render()}).catch(function(){})})(r);
     }catch(e){
       it.status='fail';it.msg=errCopy(e);
       if(e&&e.code==='noengine'){queue.forEach(function(x){if(x.status==='wait'){x.status='fail';x.msg=it.msg}})}
@@ -1001,15 +1049,72 @@ function applySupplier(by,val){
   updateDerived();
   return true;
 }
+function sha(str){
+  try{if(window.crypto&&crypto.subtle){return crypto.subtle.digest('SHA-256',new TextEncoder().encode(str)).then(function(b){return Array.prototype.map.call(new Uint8Array(b),function(x){return ('0'+x.toString(16)).slice(-2)}).join('')})}}catch(e){}
+  var h=5381;for(var i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0;return Promise.resolve('x'+(h>>>0).toString(16)+str.length);
+}
+function pinDialog(o){
+  return new Promise(function(res){
+    var w=$('#pinSheet'),a=$('#pin1'),b=$('#pin2');
+    $('#pinTitle').textContent=o.title;$('#pinMsg').textContent=o.msg||'';$('#pinErr').textContent='';
+    a.value='';b.value='';b.hidden=!o.confirm;a.placeholder=o.confirm?'New PIN (4 to 8 digits)':'PIN';
+    $('#pinForgot').hidden=!o.forgot;w.hidden=false;setTimeout(function(){a.focus()},30);
+    function done(v){w.hidden=true;$('#pinOk').onclick=$('#pinCancel').onclick=$('#pinForgot').onclick=null;a.onkeydown=b.onkeydown=null;res(v)}
+    $('#pinCancel').onclick=function(){done(null)};
+    $('#pinForgot').onclick=function(){done('forgot')};
+    var ok=function(){
+      var v=a.value.replace(/\D/g,'');
+      if(o.confirm){
+        if(v.length<4){$('#pinErr').textContent='Use at least 4 digits.';return}
+        if(v!==b.value.replace(/\D/g,'')){$('#pinErr').textContent='The two PINs do not match.';return}
+      }else if(!v){$('#pinErr').textContent='Enter your PIN.';return}
+      done(v);
+    };
+    $('#pinOk').onclick=ok;a.onkeydown=b.onkeydown=function(e){if(e.key==='Enter')ok()};
+  });
+}
+function setNewPin(title,msg){
+  return pinDialog({title:title,msg:msg,confirm:true}).then(function(p){
+    if(!p||p==='forgot')return false;
+    var salt=uid()+Math.random().toString(36).slice(2);
+    return sha(salt+p).then(function(h){state.settings.pinSalt=salt;state.settings.pinHash=h;persist();return true});
+  });
+}
+function askExistingPin(title,msg){
+  return pinDialog({title:title,msg:msg,forgot:true}).then(function(p){
+    if(p==null)return false;
+    if(p==='forgot'){
+      var me=window.__rsbUser&&window.__rsbUser();
+      if(!me){toast('A forgotten PIN can only be reset while signed in with Google.');return false}
+      if(!confirm('Reset the PIN? Locked receipts stay locked until you unlock them with the new PIN.'))return false;
+      return setNewPin('Set a new PIN','Signed in as '+me+'.');
+    }
+    return sha((state.settings.pinSalt||'')+p).then(function(h){
+      if(h===state.settings.pinHash)return true;
+      toast('Wrong PIN.');return false;
+    });
+  });
+}
+function showShot(img){
+  $('#shot').hidden=!img;$('#shotImg').classList.remove('big');if(img)$('#shotImg').src=img;
+  $('#photoDel').hidden=!img;$('#photoAdd').firstChild.nodeValue=img?'Replace photo':'Attach photo';
+}
+$('#shotImg').onclick=function(){this.classList.toggle('big')};
+$('#photoFile').onchange=function(e){
+  var f=e.target.files&&e.target.files[0];e.target.value='';if(!f||!draft)return;
+  var u=URL.createObjectURL(f),did=draft.id;
+  shrinkImg(u).then(function(d){URL.revokeObjectURL(u);if(!draft||draft.id!==did)return;draft.photo=d;imgs[did]=d;showShot(d);toast('Photo attached. Save the receipt to keep it.')}).catch(function(){toast('Could not read that image.')});
+};
+$('#photoDel').onclick=function(){if(!draft)return;draft.photo='';delete imgs[draft.id];showShot(null);toast('Photo removed. Save the receipt to keep this change.')};
 function applyLock(){
   var r=draft||{},lk=!!r.locked;
   Array.prototype.forEach.call(document.querySelectorAll('#form input,#form select,#form textarea'),function(el){el.disabled=lk});
-  $('#saveBtn').hidden=lk;$('#delBtn').hidden=lk||isNew;
+  $('#saveBtn').hidden=lk;$('#delBtn').hidden=lk||isNew;$('#photoBar').hidden=lk;
   $('#lockBtn').hidden=isNew&&!lk;
   $('#lockBtn').textContent=lk?'Unlock':'Lock';
   $('#lockBtn').disabled=lk&&!canUnlock(r);
   var n=$('#lockNote');
-  if(lk){n.hidden=false;n.textContent='This receipt is locked'+(r.lockedBy?' by '+r.lockedBy:'')+'. It cannot be edited or deleted until it is unlocked.'+(canUnlock(r)?'':' Only the master account can unlock it.')}
+  if(lk){n.hidden=false;n.textContent='This receipt is locked'+(r.lockedBy?' by '+r.lockedBy:'')+'. It cannot be edited or deleted until it is unlocked with the PIN.'+(canUnlock(r)?'':' Only the master account can unlock it.')}
   else n.hidden=true;
 }
 function commitReceipt(r){
@@ -1025,9 +1130,9 @@ function openSheet(id,opts){
   isNew=!ex;
   draft=ex?Object.assign({},ex):Object.assign(blank(),{id:uid(),source:'manual',reviewed:true});
   draft._net=netVatable(draft);draft._vat=!!ex&&Math.abs(num(draft.vatAmount)-draft._net*0.12)>0.02;
-  var img=ex?imgs[id]:opts.img;
-  if(isNew&&opts.img)imgs[draft.id]=opts.img;
-  $('#shot').hidden=!img;if(img)$('#shotImg').src=img;
+  var img=ex?(ex.photo||imgs[id]):opts.img;
+  if(isNew&&opts.img){imgs[draft.id]=opts.img;(function(did){shrinkImg(opts.img).then(function(d){if(draft&&draft.id===did){draft.photo=d;imgs[did]=d}}).catch(function(){})})(draft.id)}
+  showShot(img);
   $('#ocrBox').hidden=!(ex&&ex.ocrText);$('#ocrText').textContent=(ex&&ex.ocrText)||'';
   $('#sheetTitle').textContent=isNew?'New receipt':(ex.reviewed?'Edit receipt':'Check receipt');
   $('#saveBtn').textContent=isNew?'Add receipt':'Save receipt';
@@ -1090,16 +1195,24 @@ $('#lockBtn').onclick=function(){
   var r=Object.assign({},draft);delete r._vat;delete r._net;
   if(r.locked){
     if(!canUnlock(r)){toast('Only the master account can unlock this receipt.');return}
-    r.locked=false;r.lockedBy='';r.lockedByMaster=false;
-  }else{
+    var chain=state.settings.pinHash?askExistingPin('Unlock receipt','Enter your PIN to unlock and edit this receipt.'):Promise.resolve(true);
+    chain.then(function(ok){
+      if(!ok)return;
+      r.locked=false;r.lockedBy='';r.lockedByMaster=false;
+      commitReceipt(r);
+      draft=Object.assign({},r,{_net:netVatable(r),_vat:draft._vat});applyLock();toast('Receipt unlocked. You can edit it now.');
+    });
+    return;
+  }
+  var go=state.settings.pinHash?Promise.resolve(true):setNewPin('Create a PIN','You will need this PIN to unlock receipts later. Keep it safe.');
+  go.then(function(ok){
+    if(!ok)return;
     r.supplier=(r.supplier||'').trim();r.invoiceNo=(r.invoiceNo||'').trim();r.tin=fmtTin(r.tin);
     r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
     r.locked=true;r.lockedByMaster=!!masterOn;
     r.lockedBy=(window.__rsbUser&&window.__rsbUser())||'this device';
-  }
-  commitReceipt(r);
-  if(r.locked){closeSheet();toast('Receipt locked.')}
-  else{draft=Object.assign({},r,{_net:netVatable(r),_vat:draft._vat});applyLock();toast('Receipt unlocked. You can edit it now.')}
+    commitReceipt(r);closeSheet();toast('Receipt locked. A PIN is needed to unlock it.');
+  });
 };
 $('#cancelBtn').onclick=closeSheet;$('#closeSheet').onclick=closeSheet;$('#scrim').onclick=closeSheet;
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#sheet').hidden)closeSheet()}});
@@ -1296,6 +1409,7 @@ $('#exportBtn').onclick=function(){
 
 /* ---------- boot ---------- */
 load();syncSettings();render();
+phAll().then(function(m){var n=0;state.receipts.forEach(function(r){if(!r.photo&&m[r.id]){r.photo=m[r.id];phSaved[r.id]=r.photo.length;n++}});if(n){render();if(window.__rsbPush)window.__rsbPush()}});
 
 /* ---------- install as an app ---------- */
 (function(){
@@ -1433,7 +1547,7 @@ function subscribe(){
   unsub=base.collection('receipts').onSnapshot(applyCloud,function(e){errMsg=dbErr(e);setStatus()});
   unsubSet=base.collection('meta').doc('settings').onSnapshot(function(d){
     setReady=true;
-    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||''};lastSettings=JSON.stringify(state.settings);syncSettings()}
+    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||''};lastSettings=JSON.stringify(state.settings);syncSettings()}
     else lastSettings='';
     persist();
   },function(){});
@@ -1446,6 +1560,7 @@ function applyCloud(snap){
   Object.keys(cloud).forEach(function(id){
     var item=Object.assign(blank(),cloud[id]);
     if(localById[id]&&localById[id].ocrText)item.ocrText=localById[id].ocrText;
+    if(!item.photo&&localById[id]&&localById[id].photo)item.photo=localById[id].photo;
     out.push(item);
   });
   state.receipts.forEach(function(r){
@@ -1469,7 +1584,7 @@ function pushDiff(){
   });
   Object.keys(lastPushed).forEach(function(id){if(!seen[id]){delete lastPushed[id];ops.push(['del',id])}});
   var base=db.collection('users').doc(user.uid);
-  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||''}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
+  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||''}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
   if(!ops.length)return;
   saveIds();
   for(var i=0;i<ops.length;i+=400){
