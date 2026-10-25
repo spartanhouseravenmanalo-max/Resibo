@@ -299,6 +299,8 @@ body.panel-open #installBtn{display:none!important}
       <span class="grow"></span>
       <button class="btn sm primary" id="bulkLock" type="button">🔒 Lock selected</button>
       <button class="btn sm" id="bulkUnlock" type="button">🔓 Unlock selected</button>
+      <button class="btn sm" id="bulkRel" type="button" hidden>Mark released</button>
+      <button class="btn sm" id="bulkUnrel" type="button" hidden>Mark not released</button>
       <button class="btn sm" id="bulkClear" type="button">Clear</button>
     </div>
     <div class="tablewrap" id="pWrap">
@@ -427,6 +429,7 @@ body.panel-open #installBtn{display:none!important}
             <label class="f">Document<select data-s="docType" id="s_docType"><option>Service Invoice</option><option>Sales Invoice</option></select></label>
           </div>
           <label class="f">Invoice no.<input data-s="invoiceNo" id="s_invoiceNo"></label>
+          <label class="f" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-s="released" id="s_released" style="width:20px;height:20px"> Released to the client. Only released invoices count in your VAT and income tax.</label>
         </fieldset>
         <fieldset style="margin-top:18px">
           <legend>Client</legend>
@@ -680,7 +683,7 @@ function load(){
   var raw=null;
   try{raw=localStorage.getItem(LS_KEY)}catch(e){storageOK=false}
   if(raw){
-    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:'',vatCarry:{},taxSize:'small',filings:{},qlocks:{},adjust:{}},s.settings||{});return}}catch(e){}
+    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:'',vatCarry:{},taxSize:'small',filings:{},qlocks:{},adjust:{},penOpts:{}},s.settings||{});return}}catch(e){}
   }
   var ex=blank();
   Object.assign(ex,{id:uid(),date:'2024-03-24',supplier:'Hard Discount Philippines, Inc.',tin:'748-940-479-00378',
@@ -693,7 +696,9 @@ function load(){
 
 /* ---------- filters ---------- */
 function periodRows(){return filt(srcRows())}
-function salesPeriod(){return filt(salesAll())}
+function isReleased(r){return r.released!==false}
+function salesPeriodAll(){return filt(salesAll())}
+function salesPeriod(){return salesPeriodAll().filter(isReleased)}
 function filt(list,ignoreLock,ignorePeriod){
   var y=$('#fYear').value,q=$('#fQ').value;
   var by=$('#fBy').value;
@@ -764,7 +769,7 @@ function syncBulk(){
   var shown=(curTab==='s'?salesView():viewRows()).map(function(r){return r._path||r.id}),n=0;
   Object.keys(sel).forEach(function(k){if(shown.indexOf(k)<0)delete sel[k]});
   n=selIds().length;
-  $('#bulkBar').hidden=!n;$('#bulkCount').textContent=n+' selected';
+  $('#bulkBar').hidden=!n;$('#bulkRel').hidden=$('#bulkUnrel').hidden=curTab!=='s';$('#bulkCount').textContent=n+' selected';
   ['#selAll','#selAllS'].forEach(function(id){var a=$(id);a.checked=shown.length>0&&n===shown.length;a.indeterminate=n>0&&n<shown.length});
 }
 function bulkRun(lock){
@@ -1453,6 +1458,13 @@ $('#tbody').addEventListener('click',function(e){
 });
 function selAllSet(on){sel={};if(on)(curTab==='s'?salesView():viewRows()).forEach(function(r){sel[r._path||r.id]=true});Array.prototype.forEach.call(document.querySelectorAll('.rsel'),function(c){c.checked=on});syncBulk()}
 $('#selAll').onchange=function(){selAllSet(this.checked)};$('#selAllS').onchange=function(){selAllSet(this.checked)};
+function bulkRelease(on){
+  var ids=selIds(),rows=salesAll().filter(function(r){return ids.indexOf(r._path||r.id)>=0&&!r.locked&&isReleased(r)!==on});
+  if(!rows.length){toast('Nothing to change. They are already set that way, or they are locked.');return}
+  rows.forEach(function(r){commitEntry(Object.assign({},r,{released:on}))});
+  if(!masterOn)persist();sel={};render();toast(rows.length+' invoice'+(rows.length>1?'s':'')+(on?' marked released.':' marked not released. They are left out of VAT and income tax.'));
+}
+$('#bulkRel').onclick=function(){bulkRelease(true)};$('#bulkUnrel').onclick=function(){bulkRelease(false)};
 $('#bulkLock').onclick=function(){bulkRun(true)};$('#bulkUnlock').onclick=function(){bulkRun(false)};
 $('#bulkClear').onclick=function(){sel={};Array.prototype.forEach.call(document.querySelectorAll('.rsel'),function(c){c.checked=false});syncBulk()};
 ['#fYear','#fQ'].forEach(function(s){$(s).addEventListener('change',refreshMain)});
@@ -1590,12 +1602,12 @@ $('#exportBtn').onclick=function(){
 var sdraft=null,sIsNew=false,sDelArmed=false;
 function isSale(r){return !!r&&r.kind==='sale'}
 function salesAll(){return (masterOn?masterRows:state.receipts).filter(isSale)}
-function blankSale(){return {id:'',kind:'sale',date:'',docType:'Service Invoice',invoiceNo:'',client:'',tin:'',address:'',saleType:'vatable',saleOf:'services',netAmount:0,vatAmount:0,ewtRate:0,ewtAmount:0,description:'',reviewed:true,source:'manual',locked:false,lockedBy:'',lockedByMaster:false,added:Date.now()}}
+function blankSale(){return {id:'',kind:'sale',released:true,date:'',docType:'Service Invoice',invoiceNo:'',client:'',tin:'',address:'',saleType:'vatable',saleOf:'services',netAmount:0,vatAmount:0,ewtRate:0,ewtAmount:0,description:'',reviewed:true,source:'manual',locked:false,lockedBy:'',lockedByMaster:false,added:Date.now()}}
 function saleTotal(r){return round2(num(r.netAmount)+num(r.vatAmount))}
 function saleDue(r){return round2(saleTotal(r)-num(r.ewtAmount))}
 function saleTypeLabel(t){return {vatable:'Vatable (12%)',zero:'Zero-rated',exempt:'VAT-exempt',nonvat:'Not subject to VAT'}[t]||'Vatable (12%)'}
 function salesView(){
-  var t=$('#fSearch').value.trim().toLowerCase(),rows=salesPeriod();
+  var t=$('#fSearch').value.trim().toLowerCase(),rows=salesPeriodAll();
   if(t)rows=rows.filter(function(r){return (r.client+' '+r.tin+' '+r.invoiceNo+' '+r.description).toLowerCase().indexOf(t)>=0});
   return rows.slice().sort(function(a,b){var da=a.date||'9999',db=b.date||'9999';if(da!==db)return da<db?1:-1;return (b.added||0)-(a.added||0)});
 }
@@ -1605,7 +1617,7 @@ function renderSales(){
   all.forEach(function(r){net+=num(r.netAmount);vat+=num(r.vatAmount);tot+=saleTotal(r);ewt+=num(r.ewtAmount)});
   filt(srcRows(),true).forEach(function(r){inp+=claimed(r)});
   $('#stats').innerHTML=
-    '<div><b>'+all.length+'</b><span>Invoices, '+esc(periodLabel())+'</span></div>'+
+    '<div><b>'+all.length+'</b><span>Released invoices, '+esc(periodLabel())+'</span></div>'+
     '<div><b>'+fmt(net)+'</b><span>Net sales</span></div>'+
     '<div><b>'+fmt(vat)+'</b><span>Output VAT</span></div>'+
     '<div><b>'+fmt(tot)+'</b><span>Total billed</span></div>'+
@@ -1614,16 +1626,16 @@ function renderSales(){
   $('#notices').innerHTML=masterOn?'<div class="master-note">Viewing sales invoices from all accounts. Open any row to edit it.</div>':'';
   $('#sbody').innerHTML=rows.map(function(r){
     var id=r._path||r.id;
-    return '<tr data-id="'+esc(id)+'">'+
+    return '<tr data-id="'+esc(id)+'"'+(isReleased(r)?'':' style="opacity:.6"')+'>'+
       '<td class="sel"><input type="checkbox" class="rsel" data-sel="'+esc(id)+'"'+(sel[id]?' checked':'')+' aria-label="Select invoice"></td>'+
       '<td class="mono">'+esc(r.date||'No date')+'</td><td class="by sub">'+esc(r.by||'')+'</td>'+
-      '<td><div class="sup">'+esc(r.invoiceNo||'-')+(r.locked?'<span class="lk" title="Locked">🔒</span>':'')+'</div><div class="sub">'+esc(r.docType||'')+'</div></td>'+
+      '<td><div class="sup">'+esc(r.invoiceNo||'-')+(r.locked?'<span class="lk" title="Locked">🔒</span>':'')+'</div><div class="sub">'+esc(r.docType||'')+(isReleased(r)?'':' <span class="chip warn">Not released</span>')+'</div></td>'+
       '<td><div class="sup">'+esc(r.client||'(no client)')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
       '<td class="num">'+fmt(r.netAmount)+'</td><td class="num">'+(num(r.vatAmount)>0?fmt(r.vatAmount):'-')+'</td><td class="num">'+fmt(saleTotal(r))+'</td><td class="num">'+(num(r.ewtAmount)>0?fmt(r.ewtAmount):'-')+'</td>'+
       '<td><button class="btn sm" type="button" data-edit>Edit</button></td></tr>';
   }).join('');
-  var n2=0,v2=0,t2=0,e2=0;rows.forEach(function(r){n2+=num(r.netAmount);v2+=num(r.vatAmount);t2+=saleTotal(r);e2+=num(r.ewtAmount)});
-  $('#stfoot').innerHTML=rows.length?'<tr><td colspan="5">Total shown</td><td class="num">'+fmt(n2)+'</td><td class="num">'+fmt(v2)+'</td><td class="num">'+fmt(t2)+'</td><td class="num">'+fmt(e2)+'</td><td></td></tr>':'';
+  var n2=0,v2=0,t2=0,e2=0;rows.forEach(function(r){if(!isReleased(r))return;n2+=num(r.netAmount);v2+=num(r.vatAmount);t2+=saleTotal(r);e2+=num(r.ewtAmount)});
+  $('#stfoot').innerHTML=rows.length?'<tr><td colspan="5">Total shown (released invoices only)</td><td class="num">'+fmt(n2)+'</td><td class="num">'+fmt(v2)+'</td><td class="num">'+fmt(t2)+'</td><td class="num">'+fmt(e2)+'</td><td></td></tr>':'';
   $('#sempty').hidden=rows.length>0;
   syncBulk();
 }
@@ -1678,7 +1690,7 @@ function applyClient(by,val){
   autoSale('');fillSaleForm();updateSale();
   return true;
 }
-function setS(k,v){var el=$('#s_'+k);if(!el)return;if(el.type==='number')el.value=num(v)?num(v):'';else el.value=v==null?'':String(v)}
+function setS(k,v){var el=$('#s_'+k);if(!el)return;if(el.type==='checkbox'){el.checked=v!==false;return}if(el.type==='number')el.value=num(v)?num(v):'';else el.value=v==null?'':String(v)}
 function fillSaleForm(){
   Array.prototype.forEach.call(document.querySelectorAll('#saleForm [data-s]'),function(el){setS(el.dataset.s,sdraft[el.dataset.s])});
 }
@@ -1693,6 +1705,7 @@ function saleFlags(r){
   if(!r.client)f.push(['warn','Client registered name is missing.']);
   else if(tinKey(r.tin).length<9)f.push(['warn','Client TIN is missing or too short.']);
   if(num(r.netAmount)<=0)f.push(['err','The amount is zero.']);
+  if(r.released===false)f.push(['warn','Not released: this invoice is left out of your VAT and income tax figures.']);
   if(r.invoiceNo&&salesAll().some(function(o){return o.id!==r.id&&o.invoiceNo===r.invoiceNo&&o.docType===r.docType}))f.push(['warn','Same document type and invoice number is already saved.']);
   return f;
 }
@@ -1721,6 +1734,7 @@ function openSale(id){
   var ex=id?salesAll().find(function(r){return (r._path||r.id)===id}):null;
   sIsNew=!ex;sDelArmed=false;$('#saleDel').textContent='Delete';
   sdraft=ex?Object.assign({},ex):Object.assign(blankSale(),{id:uid()});
+  sdraft.released=sdraft.released!==false;
   sdraft._vat=!!ex&&sdraft.saleType==='vatable'&&Math.abs(num(sdraft.vatAmount)-round2(num(sdraft.netAmount)*0.12))>0.02;
   sdraft._ewt=!!ex&&Math.abs(num(sdraft.ewtAmount)-round2(num(sdraft.netAmount)*num(sdraft.ewtRate)/100))>0.02;
   fillSaleForm();fillClientList();updateSale();
@@ -1736,7 +1750,7 @@ $('#saleForm').addEventListener('input',function(e){
   else if(k==='netAmount'){sdraft.netAmount=num(t.value)}
   else if(k==='ewtRate'){sdraft.ewtRate=num(t.value);sdraft._ewt=false}
   else if(k==='saleType'){sdraft.saleType=t.value;sdraft._vat=false}
-  else sdraft[k]=t.value;
+  else sdraft[k]=t.type==='checkbox'?t.checked:t.value;
   autoSale(k);updateSale();
 });
 $('#saleForm').addEventListener('change',function(e){
@@ -1818,6 +1832,7 @@ function addSalesSheets(wb,srows,prows){
     [C('Your adjustment'),C(''),N(sc.adjAmt)],
     [C('VAT payable'),C(''),N(sc.pay+sc.adjAmt,'C12-C14-C15+C16+C17+C18')],
     [],[C('Carried-over input VAT is worked out from the quarters saved in Resibo, or the figure you typed on the VAT tab. Check against your filed 2550Q.')]];
+  if(sc.keys.length===1){var k0=sc.keys[0];penaltyRows(penaltyCalc('2550Q',k0.slice(0,4),k0.slice(5),sc.pay+sc.adjAmt,vatCalc(prows,srows).salesTotal)).forEach(function(x){b.push(x)})}
   XLSX.utils.book_append_sheet(wb,sheet(b,[52,18,16]),'VAT - 2550Q Output Tax');
   var keys={};srows.forEach(function(r){keys[qk(r)]=1});
   var kl=Object.keys(keys).sort();
@@ -2020,7 +2035,7 @@ function itrRows(y){
   var by=masterOn?$('#fBy').value:'';
   var ok=function(r){return validDate(r.date)&&r.date.slice(0,4)===y&&(!by||r.by===by)};
   var q=[0,1,2,3].map(function(){return {inc:0,exp:0,ewt:0}});
-  salesAll().filter(ok).forEach(function(r){var i=qOf(r.date)-1;q[i].inc+=num(r.netAmount);q[i].ewt+=num(r.ewtAmount)});
+  salesAll().filter(isReleased).filter(ok).forEach(function(r){var i=qOf(r.date)-1;q[i].inc+=num(r.netAmount);q[i].ewt+=num(r.ewtAmount)});
   srcRows().filter(ok).forEach(function(r){q[qOf(r.date)-1].exp+=deductible(r)});
   payAll().filter(ok).forEach(function(r){q[qOf(r.date)-1].exp+=num(r.amount)});
   var labels=['Q1 (Jan-Mar)','Q1-Q2 (Jan-Jun)','Q1-Q3 (Jan-Sep)','Full year (1701)'],out=[],ci=0,ce=0,cw=0,paid=0;
@@ -2049,7 +2064,7 @@ function renderItrTab(){
   if(!y){$('#iWrap').innerHTML='<p class="muted">Add some dated sales and receipts to see the income tax estimate.</p>';return}
   var rows=qn?[all[qn-1]]:all,cols=qn?[qn-1]:[0,1,2,3];
   var by=masterOn?$('#fBy').value:'',ok=function(r){return validDate(r.date)&&r.date.slice(0,4)===y&&(!by||r.by===by)&&(lockMode==='all'||(lockMode==='locked')===!!r.locked)};
-  var P=srcRows().filter(ok),S=salesAll().filter(ok);
+  var P=srcRows().filter(ok),S=salesAll().filter(isReleased).filter(ok);
   var sv=[0,0,0,0],gv=[0,0,0,0];
   S.forEach(function(r){var i=qOf(r.date)-1;if(r.saleOf==='goods')gv[i]+=num(r.netAmount);else sv[i]+=num(r.netAmount)});
   var cat={};P.forEach(function(r){var c=r.category||'Miscellaneous';cat[c]=cat[c]||[0,0,0,0];cat[c][qOf(r.date)-1]+=deductible(r)});
@@ -2080,7 +2095,7 @@ function vatCalc(P,S){
   return o;
 }
 function vatChain(){
-  var P=filt(srcRows(),false,true),S=filt(salesAll(),false,true),g={};
+  var P=filt(srcRows(),false,true),S=filt(salesAll().filter(isReleased),false,true),g={};
   var key=function(r){return validDate(r.date)?r.date.slice(0,4)+'-'+qOf(r.date):null};
   P.forEach(function(r){var k=key(r);if(k)(g[k]=g[k]||{P:[],S:[]}).P.push(r)});
   S.forEach(function(r){var k=key(r);if(k)(g[k]=g[k]||{P:[],S:[]}).S.push(r)});
@@ -2140,6 +2155,7 @@ function addItrSheet(wb){
     var f='IF('+d+'<=250000,0,IF('+d+'<=400000,('+d+'-250000)*0.15,IF('+d+'<=800000,22500+('+d+'-400000)*0.2,IF('+d+'<=2000000,102500+('+d+'-800000)*0.25,IF('+d+'<=8000000,402500+('+d+'-2000000)*0.3,2202500+('+d+'-8000000)*0.35)))))';
     a.push([C(r.label),N(r.inc),N(r.exp),N(r.net,'MAX(0,B'+n+'-C'+n+')'),N(r.tax,f),N(r.cw),{t:'n',v:round2(r.paid),z:'#,##0.00;-#,##0.00;;@'},{t:'n',v:round2(r.adj),z:'#,##0.00;-#,##0.00;;@'},N(r.due,'E'+n+'-F'+n+'-G'+n+'+H'+n)]);
   });
+  (function(){var qn=Number($('#fQ').value)||0,an=!(qn&&qn<4),row=an?rows[3]:rows[qn-1];if(!row||!y)return;penaltyRows(penaltyCalc(an?'1701':'1701Q',y,an?4:qn,Math.max(0,row.due),row.inc)).forEach(function(x){a.push(x)})})();
   a.push([]);
   a.push([C('Sales are without VAT. Deductions are the amounts paid minus the input VAT you claimed on the 2550Q. Rates: 0% up to 250,000; 15% over 250,000; 22,500 + 20% over 400,000; 102,500 + 25% over 800,000; 402,500 + 30% over 2,000,000; 2,202,500 + 35% over 8,000,000.')]);
   a.push([C('Estimate only. Capital goods are not depreciated here and other credits are not included. Confirm with your accountant before filing the 1701 or 1701Q.')]);
@@ -2163,26 +2179,43 @@ function dueDateFor(form,y,q){
 var DOWN=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function compTaxDue(t){var b=[[5000,1000],[10000,3000],[20000,5000],[50000,10000],[100000,15000],[500000,20000],[1000000,30000],[5000000,40000]];for(var i=0;i<b.length;i++)if(t<=b[i][0])return b[i][1];return 50000}
 function compNoTax(g){var b=[[50000,1000],[100000,3000],[500000,5000],[5000000,10000],[10000000,15000],[25000000,20000]];for(var i=0;i<b.length;i++)if(g<=b[i][0])return b[i][1];return 25000}
-function penaltyHtml(form,year,q,tax,gross){
-  var dd=dueDateFor(form,year,q);if(!dd)return '';
-  var rec=filings()[form+'|'+(form==='1701'?String(year):year+'-'+q)]||null,fixed=!!rec;
-  var pay=rec?rec.date:(penDate||todayISO()),small=state.settings.taxSize!=='large';
-  var days=Math.max(0,diffDays(dd.due,pay)),late=days>0;
+function penOpts(mark){var o=(state.settings.penOpts||{})[mark]||{};return {sur:o.sur!==false,int:o.int!==false,comp:o.comp!==false}}
+function penaltyCalc(form,year,q,tax,gross){
+  var dd=dueDateFor(form,year,q);if(!dd)return null;
+  var mark=form+'|'+(form==='1701'?String(year):year+'-'+q),rec=filings()[mark]||null,small=state.settings.taxSize!=='large';
+  var pay=rec?rec.date:(penDate||todayISO()),days=Math.max(0,diffDays(dd.due,pay)),late=days>0;
   tax=Math.max(0,round2(tax));
   var sur=0,intr=0,comp=0;
   if(late){if(tax>0){sur=round2(tax*(small?0.10:0.25));intr=round2(tax*(small?0.06:0.12)*days/365);comp=compTaxDue(tax)}else comp=compNoTax(gross||0)}
-  var total=round2(tax+sur+intr+comp);
+  var o=penOpts(mark);
+  return {dd:dd,mark:mark,rec:rec,small:small,pay:pay,days:days,late:late,tax:tax,sur:sur,intr:intr,comp:comp,o:o,total:round2(tax+(o.sur?sur:0)+(o.int?intr:0)+(o.comp?comp:0))};
+}
+function penaltyHtml(form,year,q,tax,gross){
+  var c=penaltyCalc(form,year,q,tax,gross);if(!c)return '';
+  var fixed=!!c.rec,small=c.small,dd=c.dd;
   var shifted=dd.raw!==dd.due?' (the '+dd.raw+' deadline is a '+DOWN[isoDow(dd.raw)]+', so it moves to the next working day)':'';
-  var r=function(l,v,c){return '<tr'+(c?' class="'+c+'"':'')+'><td class="k">'+esc(l)+'</td><td class="num">'+fmt(v)+'</td></tr>'};
+  var r=function(l,v,cl){return '<tr'+(cl?' class="'+cl+'"':'')+'><td class="k">'+esc(l)+'</td><td class="num">'+fmt(v)+'</td></tr>'};
+  var pr=function(l,v,key){var on=c.o[key];return '<tr><td class="k"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" data-pen="'+key+'" data-mark="'+esc(c.mark)+'"'+(on?' checked':'')+' style="width:18px;height:18px"> '+esc(l)+'</label></td><td class="num"'+(on?'':' style="text-decoration:line-through;opacity:.5"')+'>'+fmt(v)+'</td></tr>'};
   return '<div><h3>If you file late, Form '+esc(form)+' '+(form==='1701'?esc(year):esc(year)+' Q'+q)+'</h3>'+
-    '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px"><label class="f">'+(fixed?'Date you filed and paid (from your filing record)':'Date you file and pay')+'<input type="date" id="penDate" value="'+esc(pay)+'"'+(fixed?' disabled':'')+'></label>'+
+    '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px"><label class="f">'+(fixed?'Date you filed and paid (from your filing record)':'Date you file and pay')+'<input type="date" id="penDate" value="'+esc(c.pay)+'"'+(fixed?' disabled':'')+'></label>'+
     '<label class="f">Taxpayer size<select id="taxSize"><option value="small"'+(small?' selected':'')+'>Micro or small (sales under 20 million)</option><option value="large"'+(small?'':' selected')+'>Medium or large</option></select></label></div>'+
-    '<p class="muted" style="margin-bottom:8px">Deadline: <b>'+esc(dd.due)+'</b>'+esc(shifted)+'. '+(late?'You are '+days+' day'+(days>1?'s':'')+' late.':'This date is not late, so there is no penalty.')+'</p>'+
-    '<div class="box"><table><tbody>'+r('Tax due',tax)+(late?(tax>0?r('Surcharge ('+(small?'10':'25')+'%)',sur)+r('Interest ('+(small?'6':'12')+'% a year, '+days+' days)',intr):'')+r(tax>0?'Compromise penalty':'Compromise penalty (no tax due, based on sales)',comp):'')+r('Total to pay',total,'tot')+'</tbody></table></div>'+
+    '<p class="muted" style="margin-bottom:8px">Deadline: <b>'+esc(dd.due)+'</b>'+esc(shifted)+'. '+(c.late?'You are '+c.days+' day'+(c.days>1?'s':'')+' late. Tick the charges you want to include.':'This date is not late, so there is no penalty.')+'</p>'+
+    '<div class="box"><table><tbody>'+r('Tax due',c.tax)+(c.late?(c.tax>0?pr('Surcharge ('+(small?'10':'25')+'%)',c.sur,'sur')+pr('Interest ('+(small?'6':'12')+'% a year, '+c.days+' days)',c.intr,'int'):'')+pr(c.tax>0?'Compromise penalty':'Compromise penalty (no tax due, based on sales)',c.comp,'comp'):'')+r('Total to pay',c.total,'tot')+'</tbody></table></div>'+
     '<p class="muted" style="margin-top:8px">This is an estimate. Surcharge is 50% instead if the BIR finds you did not file or the return is fraudulent. Holidays are not considered when moving the deadline. The compromise amount is the BIR&#39;s to accept and follows its standard schedule; I did not apply any reduction to it. Confirm the figures with your Revenue District Office before paying.</p></div>';
+}
+function penaltyRows(c){
+  if(!c)return [];
+  var rows=[[],[C('LATE-FILING CHARGES (as ticked in Resibo)')],[C('Deadline'),C(c.dd.due)],[C('Date filed and paid'),C(c.pay)],[C('Days late'),N(c.days)],[C('Tax due'),C(''),N(c.tax)]];
+  if(c.late){
+    if(c.tax>0){rows.push([C('Surcharge'+(c.o.sur?'':' (not applied)')),C(''),N(c.o.sur?c.sur:0)]);rows.push([C('Interest'+(c.o.int?'':' (not applied)')),C(''),N(c.o.int?c.intr:0)])}
+    rows.push([C('Compromise penalty'+(c.o.comp?'':' (not applied)')),C(''),N(c.o.comp?c.comp:0)]);
+  }
+  rows.push([C('Total to pay'),C(''),N(c.total)]);
+  return rows;
 }
 document.addEventListener('change',function(e){
   var t=e.target;if(!t)return;
+  if(t.dataset&&t.dataset.pen){var m=t.dataset.mark,o=Object.assign({},penOpts(m));o[t.dataset.pen]=t.checked;state.settings.penOpts=state.settings.penOpts||{};state.settings.penOpts[m]=o;persist();mainView();return}
   if(t.id==='penDate'){penDate=t.value;mainView()}
   else if(t.id==='taxSize'){state.settings.taxSize=t.value;persist();mainView()}
 });
@@ -2530,7 +2563,7 @@ function subscribe(){
   unsub=base.collection('receipts').onSnapshot(applyCloud,function(e){errMsg=dbErr(e);setStatus()});
   unsubSet=base.collection('meta').doc('settings').onSnapshot(function(d){
     setReady=true;
-    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||'',taxSize:v.taxSize||'small',adjust:(function(){try{return JSON.parse(v.adjust||'{}')||{}}catch(e){return {}}})(),filings:(function(){try{return JSON.parse(v.filings||'{}')||{}}catch(e){return {}}})(),qlocks:(function(){try{return JSON.parse(v.qlocks||'{}')||{}}catch(e){return {}}})(),vatCarry:(function(){try{return JSON.parse(v.vatCarry||'{}')||{}}catch(e){return {}}})()};lastSettings=JSON.stringify(state.settings);syncSettings()}
+    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||'',taxSize:v.taxSize||'small',penOpts:(function(){try{return JSON.parse(v.penOpts||'{}')||{}}catch(e){return {}}})(),adjust:(function(){try{return JSON.parse(v.adjust||'{}')||{}}catch(e){return {}}})(),filings:(function(){try{return JSON.parse(v.filings||'{}')||{}}catch(e){return {}}})(),qlocks:(function(){try{return JSON.parse(v.qlocks||'{}')||{}}catch(e){return {}}})(),vatCarry:(function(){try{return JSON.parse(v.vatCarry||'{}')||{}}catch(e){return {}}})()};lastSettings=JSON.stringify(state.settings);syncSettings()}
     else lastSettings='';
     persist();
   },function(){});
@@ -2567,7 +2600,7 @@ function pushDiff(){
   });
   Object.keys(lastPushed).forEach(function(id){if(!seen[id]){delete lastPushed[id];ops.push(['del',id])}});
   var base=db.collection('users').doc(user.uid);
-  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||'',vatCarry:JSON.stringify(state.settings.vatCarry||{}),taxSize:state.settings.taxSize||'small',filings:JSON.stringify(state.settings.filings||{}),qlocks:JSON.stringify(state.settings.qlocks||{}),adjust:JSON.stringify(state.settings.adjust||{})}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
+  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||'',vatCarry:JSON.stringify(state.settings.vatCarry||{}),taxSize:state.settings.taxSize||'small',filings:JSON.stringify(state.settings.filings||{}),qlocks:JSON.stringify(state.settings.qlocks||{}),adjust:JSON.stringify(state.settings.adjust||{}),penOpts:JSON.stringify(state.settings.penOpts||{})}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
   if(!ops.length)return;
   saveIds();
   for(var i=0;i<ops.length;i+=400){
