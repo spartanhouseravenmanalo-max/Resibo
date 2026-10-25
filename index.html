@@ -1813,7 +1813,54 @@ function xdate(v){
   return '';
 }
 function yes(v){return /^(y|yes|true|1|x|oo)/i.test(String(v==null?'':v).trim())}
+function findLedger(aoa){
+  for(var i=0;i<Math.min(aoa.length,15);i++){
+    var row=aoa[i]||[],m={};
+    for(var c=0;c<row.length;c++){var h=hnorm(row[c]);
+      if(h==='date'&&m.date==null)m.date=c;else if(h==='payee')m.payee=c;else if(h==='particulars')m.part=c;else if(h==='tin')m.tin=c;
+      else if(h==='ref'||h==='refno'||h==='reference')m.ref=c;else if(h==='amount')m.gross=c;else if(h==='inputvat')m.vat=c;else if(h==='vatsales')m.net=c;
+      else if(h==='vatexempt')m.ex=c;else if(h==='otherthancapitalgoods')m.goods=c;else if(h==='services')m.serv=c}
+    if(m.payee!=null&&m.vat!=null&&m.net!=null&&m.gross!=null)return {row:i,m:m};
+  }
+  return null;
+}
+function ledgerCategory(part,payee){
+  var p=String(part||'').trim().toLowerCase(),t=String(payee||'');
+  if(/meralco|electric|water|maynilad/i.test(t))return 'Utilities (electricity, water)';
+  if(/notary|attorney|law office|accountant|cpa/i.test(t))return 'Professional fees';
+  if(p==='supplies')return 'Office & supplies';
+  if(p==='transportation')return 'Transportation & travel';
+  if(p==='rent')return 'Rent';
+  for(var i=0;i<KEYCATS.length;i++){if(KEYCATS[i][0].test(t))return KEYCATS[i][1]}
+  return 'Miscellaneous';
+}
+function importLedger(aoa,L){
+  var m=L.m,out=[],blank0=0,noDate=0,noTin=0,g=function(row,k){return m[k]==null?'':row[m[k]]};
+  for(var r=L.row+1;r<aoa.length;r++){
+    var row=aoa[r]||[];
+    var nm=String(g(row,'payee')==null?'':g(row,'payee')).trim(),ref=String(g(row,'ref')==null?'':g(row,'ref')).trim();
+    var G=round2(xnum(g(row,'gross'))),H=round2(xnum(g(row,'vat'))),I=round2(xnum(g(row,'net'))),J=round2(xnum(g(row,'ex')));
+    if(/^[\s.\-_]*$/.test(nm))nm='';
+    if(/^[\s.\-_]*$/.test(ref))ref='';
+    if(!nm&&!ref&&!G){blank0++;continue}
+    if(!ref&&!g(row,'date')){blank0++;continue}
+    if(!H&&!I&&!J&&G)J=G;
+    var date=xdate(g(row,'date'));if(!date)noDate++;
+    var tin=fmtTin(g(row,'tin'));if(!tinKey(tin))noTin++;
+    var nonvat=H<=0&&I<=0&&J>0;
+    var part=String(g(row,'part')||'').trim();
+    var svc=m.serv!=null&&xnum(g(row,'serv'))>0,gds=m.goods!=null&&xnum(g(row,'goods'))>0;
+    var rr=blank();
+    Object.assign(rr,{id:uid(),date:date,docType:'Sales Invoice',invoiceNo:ref,supplier:nm,tin:tin,address:'',supplierVat:nonvat?'NON-VAT':'VAT',buyerShown:H>0,
+      grossVatable:nonvat?0:round2(I+H),vatAmount:nonvat?0:H,exempt:J,zeroRated:0,printedTotal:0,
+      description:/^(others?|supplies|transportation|overhead)$/i.test(part)?'':part,
+      category:ledgerCategory(part,nm),purchaseType:svc&&!gds?'services':'goods',purpose:'',claimVat:H>0,reviewed:true,source:'import'});
+    out.push(rr);
+  }
+  return {rows:out,blank:blank0,noDate:noDate,noClaim:0,noTin:noTin,ledger:true};
+}
 function importRows(aoa,kind){
+  if(kind!=='s'){var LG=findLedger(aoa);if(LG)return importLedger(aoa,LG)}
   var al=kind==='s'?SAL:PAL,best=null,bi=-1;
   for(var i=0;i<Math.min(aoa.length,15);i++){var h=mapHeader(aoa[i]||[],al);if(!best||h.hits>best.hits){best=h;bi=i}}
   if(!best||best.hits<3||best.map.net==null)return {error:'columns'};
@@ -1859,10 +1906,11 @@ function doImport(aoa,kind){
   var added=0,dups=0;
   res.rows.forEach(function(r){
     if(r.invoiceNo&&have[dupKey(r)]){dups++;return}
-    have[dupKey(r)]=1;state.receipts.push(r);added++;
+    state.receipts.push(r);added++;
   });
   persist();render();
   var msg=added+' '+(kind==='s'?'sales invoice':'receipt')+(added===1?'':'s')+' imported'+(dups?', '+dups+' already saved and skipped':'')+(res.noDate?'. '+res.noDate+' had no readable date, so fill those in':'')+'.';
+  if(res.noTin)msg+=' '+res.noTin+' have no TIN.';
   if(kind!=='s'&&res.noClaim)msg+=' Input VAT was not claimed for '+res.noClaim+' rows with no Yes/No answer.';
   toast(msg);
   return {added:added,dups:dups,res:res};
@@ -1875,7 +1923,15 @@ $('#xlsIn').onchange=function(e){
   var kind=curTab==='s'?'s':'p';
   f.arrayBuffer().then(function(buf){
     var wb=XLSX.read(buf,{type:'array'}),names=wb.SheetNames,pick=names[0];
-    names.forEach(function(n){var l=n.toLowerCase();if(kind==='s'?/sale|invoice/.test(l):/purchase|receipt|expense/.test(l)){if(pick===names[0]&&!(kind==='s'?/sale|invoice/.test(names[0].toLowerCase()):/purchase|receipt|expense/.test(names[0].toLowerCase())))pick=n}});
+    var strong=kind==='s'?/sale/i:/expense|purchase|disburse/i,weak=kind==='s'?/invoice/i:/receipt/i;
+    var cand=names.filter(function(n){return strong.test(n)});if(!cand.length)cand=names.filter(function(n){return weak.test(n)});
+    if(cand.length)pick=cand[0];
+    if(cand.length>1){
+      var ans=window.prompt('This file has more than one matching sheet:\n'+cand.map(function(n,i){return (i+1)+') '+n}).join('\n')+'\nType the number of the sheet to import.','1');
+      if(ans===null)return;
+      var ix=parseInt(ans,10);if(!(ix>=1&&ix<=cand.length)){toast('Import cancelled.');return}
+      pick=cand[ix-1];
+    }
     var aoa=XLSX.utils.sheet_to_json(wb.Sheets[pick],{header:1,raw:true,defval:''});
     doImport(aoa,kind);
   }).catch(function(){toast('Could not read that file. Use an .xlsx, .xls or .csv file.')});
