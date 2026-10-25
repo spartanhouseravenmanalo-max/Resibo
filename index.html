@@ -648,7 +648,7 @@ function load(){
   var raw=null;
   try{raw=localStorage.getItem(LS_KEY)}catch(e){storageOK=false}
   if(raw){
-    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:''},s.settings||{});return}}catch(e){}
+    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:'',vatCarry:{}},s.settings||{});return}}catch(e){}
   }
   var ex=blank();
   Object.assign(ex,{id:uid(),date:'2024-03-24',supplier:'Hard Discount Philippines, Inc.',tin:'748-940-479-00378',
@@ -662,13 +662,13 @@ function load(){
 /* ---------- filters ---------- */
 function periodRows(){return filt(srcRows())}
 function salesPeriod(){return filt(salesAll())}
-function filt(list,ignoreLock){
+function filt(list,ignoreLock,ignorePeriod){
   var y=$('#fYear').value,q=$('#fQ').value;
   var by=$('#fBy').value;
   return list.filter(function(r){
     if(masterOn&&by&&r.by!==by)return false;
     if(!ignoreLock){if(lockMode==='locked'&&!r.locked)return false;if(lockMode==='open'&&r.locked)return false}
-    if(!y&&!q)return true;
+    if(ignorePeriod||(!y&&!q))return true;
     if(!validDate(r.date))return false;
     if(y&&r.date.slice(0,4)!==y)return false;
     if(q&&String(qOf(r.date))!==q)return false;
@@ -1765,6 +1765,7 @@ function addSalesSheets(wb,srows,prows){
     if(r.saleType==='vatable'){var x=r.saleOf==='goods'?gv:sv;x[0]+=n;x[1]+=num(r.vatAmount)}
     else if(r.saleType==='zero')zr+=n;else if(r.saleType==='exempt')ex+=n;else nv+=n});
   prows.forEach(function(r){inp+=claimed(r)});
+  var sc=vatScope();
   var b=[[C('2550Q OUTPUT TAX WORKSHEET')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Period'),C(label)],[],
     [C('Item'),C('Net sales'),C('Output VAT')],
     [C('Vatable sales, services'),N(sv[0]),N(sv[1])],
@@ -1775,8 +1776,11 @@ function addSalesSheets(wb,srows,prows){
     [C('Total sales and output VAT'),N(sv[0]+gv[0]+zr+ex+nv,'SUM(B7:B11)'),N(sv[1]+gv[1],'SUM(C7:C11)')],
     [],
     [C('Less: input VAT claimed (from your purchases)'),C(''),N(inp)],
-    [C('VAT payable (a negative number is excess input VAT)'),C(''),N(sv[1]+gv[1]-inp,'C12-C14')],
-    [],[C('Check against your 2550Q. Input VAT carried over from earlier quarters is not included.')]];
+    [C('Less: input VAT carried over from the previous quarter'),C(''),N(sc.cin)],
+    [C('Add back: excess input VAT carried to the next quarter'),C(''),N(sc.cout)],
+    [C('Adjustment for carry-over figures you typed (usually 0)'),C(''),N(sc.adj)],
+    [C('VAT payable'),C(''),N(sc.pay,'C12-C14-C15+C16+C17')],
+    [],[C('Carried-over input VAT is worked out from the quarters saved in Resibo, or the figure you typed on the VAT tab. Check against your filed 2550Q.')]];
   XLSX.utils.book_append_sheet(wb,sheet(b,[52,18,16]),'VAT - 2550Q Output Tax');
   var keys={};srows.forEach(function(r){keys[qk(r)]=1});
   var kl=Object.keys(keys).sort();
@@ -2031,13 +2035,35 @@ function vatCalc(P,S){
   o.salesTotal=o.sv[0]+o.gv[0]+o.zr+o.ex+o.nv;o.purchTotal=o.cl.goods[0]+o.cl.services[0]+o.cl.capital[0];
   return o;
 }
+function vatChain(){
+  var P=filt(srcRows(),false,true),S=filt(salesAll(),false,true),g={};
+  var key=function(r){return validDate(r.date)?r.date.slice(0,4)+'-'+qOf(r.date):null};
+  P.forEach(function(r){var k=key(r);if(k)(g[k]=g[k]||{P:[],S:[]}).P.push(r)});
+  S.forEach(function(r){var k=key(r);if(k)(g[k]=g[k]||{P:[],S:[]}).S.push(r)});
+  var keys=Object.keys(g).sort();if(!keys.length)return {};
+  var y=+keys[0].slice(0,4),q=+keys[0].slice(5),last=keys[keys.length-1],out={},prev=0,ov=(state.settings&&state.settings.vatCarry)||{};
+  for(var n=0;n<400;n++){
+    var k=y+'-'+q,d=g[k]||{P:[],S:[]},o=vatCalc(d.P,d.S);
+    var has=ov[k]!==undefined&&ov[k]!=='',cin=has?round2(num(ov[k])):round2(prev);
+    var avail=o.inp+cin,cout=Math.max(0,round2(avail-o.out)),pay=Math.max(0,round2(o.out-avail));
+    out[k]={o:o,cin:cin,auto:round2(prev),has:has,cout:cout,pay:pay};prev=cout;
+    if(k===last)break;q++;if(q>4){q=1;y++}
+  }
+  return out;
+}
+function vatScope(){
+  var ch=vatChain(),y=$('#fYear').value,q=$('#fQ').value;
+  var ks=Object.keys(ch).sort().filter(function(k){return (!y||k.slice(0,4)===y)&&(!q||k.slice(5)===q)});
+  var sc={keys:ks,chain:ch,cin:0,cout:0,pay:0,adj:0},out=0,inp=0;
+  if(ks.length){sc.cin=ch[ks[0]].cin;sc.cout=ch[ks[ks.length-1]].cout;ks.forEach(function(k){sc.pay+=ch[k].pay;out+=ch[k].o.out;inp+=ch[k].o.inp});sc.pay=round2(sc.pay);sc.adj=round2(sc.pay-(out-inp-sc.cin+sc.cout));if(Math.abs(sc.adj)<0.005)sc.adj=0}
+  return sc;
+}
 function renderVat(){
-  var P=periodRows(),S=salesPeriod(),o=vatCalc(P,S);
+  var P=periodRows(),S=salesPeriod(),o=vatCalc(P,S),sc=vatScope();
   var r2=function(l,a,b,c){return '<tr'+(c?' class="'+c+'"':'')+'><td class="k">'+esc(l)+'</td><td class="num">'+(a==null?'':fmt(a))+'</td><td class="num">'+(b==null?'':fmt(b))+'</td></tr>'};
-  var groups={};
-  P.forEach(function(r){var k=validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date';(groups[k]=groups[k]||{P:[],S:[]}).P.push(r)});
-  S.forEach(function(r){var k=validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date';(groups[k]=groups[k]||{P:[],S:[]}).S.push(r)});
-  var gk=Object.keys(groups).sort();
+  var one=sc.keys.length===1?sc.chain[sc.keys[0]]:null,ok1=one?sc.keys[0]:'';
+  var carryRow=one?'<tr><td class="k">Less: input VAT carried over from the previous quarter<br><span class="muted">Worked out for you: '+fmt(one.auto)+'. Type the figure from your filed 2550Q to replace it.</span></td><td class="num"></td><td class="num"><input id="vatCarryIn" data-k="'+esc(ok1)+'" type="number" step="0.01" min="0" inputmode="decimal" value="'+(one.has?one.cin:'')+'" placeholder="'+fmt(one.auto)+'" style="width:130px;text-align:right;padding:6px 8px"></td></tr>'
+    :'<tr><td class="k">Less: input VAT carried over from before this period</td><td class="num"></td><td class="num">'+fmt(sc.cin)+'</td></tr>';
   $('#vWrap').innerHTML=qSegHtml()+
     '<div><h3>2550Q worksheet, '+esc(periodLabel())+'</h3><div class="box"><table><thead><tr><th>Sales and output VAT</th><th class="num">Net sales</th><th class="num">Output VAT</th></tr></thead><tbody>'+
       r2('Vatable sales, services',o.sv[0],o.sv[1])+r2('Vatable sales, goods',o.gv[0],o.gv[1])+r2('Zero-rated sales',o.zr,null)+r2('VAT-exempt sales',o.ex,null)+r2('Not subject to VAT (non-VAT)',o.nv,null)+r2('Total sales and output VAT',o.salesTotal,o.out,'tot')+
@@ -2046,11 +2072,19 @@ function renderVat(){
       r2('Goods other than capital goods',o.cl.goods[0],o.cl.goods[1])+r2('Services',o.cl.services[0],o.cl.services[1])+r2('Capital goods',o.cl.capital[0],o.cl.capital[1])+r2('Total input VAT claimed',o.purchTotal,o.inp,'tot')+
       r2('Exempt purchases, including non-VAT suppliers',o.pex,null)+r2('Zero-rated purchases',o.pzr,null)+r2('Taxable purchases with no input VAT claimed',o.unNet,o.unVat)+
     '</tbody></table></div></div>'+
-    '<div><div class="box"><table><tbody class="big">'+r2('Output VAT',null,o.out)+r2('Less: input VAT claimed',null,o.inp)+r2(o.payable<0?'Excess input VAT':'VAT payable',null,o.payable,'tot')+'</tbody></table></div>'+
-    '<p class="muted" style="margin-top:8px">Input VAT carried over from earlier quarters is not included. Compare each line with your 2550Q before you encode it. Pick a quarter and year above to match one filing.</p></div>'+
-    (gk.length>1?'<div><h3>By quarter</h3><div class="box"><table><thead><tr><th>Quarter</th><th class="num">Net sales</th><th class="num">Output VAT</th><th class="num">Net purchases (claimed)</th><th class="num">Input VAT claimed</th><th class="num">VAT payable</th></tr></thead><tbody>'+
-      gk.map(function(k){var q=vatCalc(groups[k].P,groups[k].S);return '<tr><td class="k">'+esc(k)+'</td><td class="num">'+fmt(q.salesTotal)+'</td><td class="num">'+fmt(q.out)+'</td><td class="num">'+fmt(q.purchTotal)+'</td><td class="num">'+fmt(q.inp)+'</td><td class="num"><b>'+fmt(q.payable)+'</b></td></tr>'}).join('')+'</tbody></table></div></div>':'');
+    '<div><div class="box"><table><tbody class="big">'+r2('Output VAT',null,o.out)+r2('Less: input VAT claimed',null,o.inp)+carryRow+
+      r2('Add back: excess input VAT carried to the next quarter',null,sc.cout)+(sc.adj?r2('Adjustment for the carry-over figures you typed',null,sc.adj):'')+r2('VAT payable',null,sc.pay,'tot')+'</tbody></table></div>'+
+    '<p class="muted" style="margin-top:8px">If your input VAT is more than your output VAT, the extra is carried over to the next quarter and used there. It is worked out for you from the quarters you have saved. If you also have a balance from earlier quarters or years that is not saved here, pick that quarter and type the figure from your filed 2550Q. Compare each line with your 2550Q before you encode it.</p></div>'+
+    (sc.keys.length>1?'<div><h3>By quarter</h3><div class="box"><table><thead><tr><th>Quarter</th><th class="num">Net sales</th><th class="num">Output VAT</th><th class="num">Input VAT claimed</th><th class="num">Carried in</th><th class="num">VAT payable</th><th class="num">Carried to next</th></tr></thead><tbody>'+
+      sc.keys.map(function(k){var q=sc.chain[k];return '<tr><td class="k">'+esc(k.replace('-',' Q'))+'</td><td class="num">'+fmt(q.o.salesTotal)+'</td><td class="num">'+fmt(q.o.out)+'</td><td class="num">'+fmt(q.o.inp)+'</td><td class="num">'+fmt(q.cin)+'</td><td class="num"><b>'+fmt(q.pay)+'</b></td><td class="num">'+fmt(q.cout)+'</td></tr>'}).join('')+'</tbody></table></div></div>':'');
 }
+$('#vWrap').addEventListener('change',function(e){
+  var t=e.target;if(!t||t.id!=='vatCarryIn')return;
+  var k=t.dataset.k,v=t.value;
+  state.settings.vatCarry=state.settings.vatCarry||{};
+  if(v==='')delete state.settings.vatCarry[k];else state.settings.vatCarry[k]=round2(num(v));
+  persist();renderVat();toast(v===''?'Back to the worked-out amount.':'Carry-over saved for '+k.replace('-',' Q')+'.');
+});
 function addItrSheet(wb){
   var tp=state.settings,y=itrYear(),rows=itrRows(y);
   var a=[[C('INCOME TAX ESTIMATE, BIR 1701 / 1701Q (graduated rates, itemized deductions)')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Year'),C(y)],[],
@@ -2206,7 +2240,7 @@ function subscribe(){
   unsub=base.collection('receipts').onSnapshot(applyCloud,function(e){errMsg=dbErr(e);setStatus()});
   unsubSet=base.collection('meta').doc('settings').onSnapshot(function(d){
     setReady=true;
-    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||''};lastSettings=JSON.stringify(state.settings);syncSettings()}
+    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||'',vatCarry:(function(){try{return JSON.parse(v.vatCarry||'{}')||{}}catch(e){return {}}})()};lastSettings=JSON.stringify(state.settings);syncSettings()}
     else lastSettings='';
     persist();
   },function(){});
@@ -2243,7 +2277,7 @@ function pushDiff(){
   });
   Object.keys(lastPushed).forEach(function(id){if(!seen[id]){delete lastPushed[id];ops.push(['del',id])}});
   var base=db.collection('users').doc(user.uid);
-  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||''}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
+  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||'',vatCarry:JSON.stringify(state.settings.vatCarry||{})}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
   if(!ops.length)return;
   saveIds();
   for(var i=0;i<ops.length;i+=400){
