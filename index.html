@@ -139,6 +139,14 @@ tbody tr:hover{background:var(--surface2)}
 tbody tr.is-review td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
 .sup{font-weight:500}
+.report{display:flex;flex-direction:column;gap:18px}
+.report h3{margin:0 0 6px;font-size:16px}
+.report table{min-width:0;width:100%}
+.report .box{border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+.report td.k{width:60%}
+.report tr.tot td{font-weight:600;background:var(--surface2)}
+.report .big td{font-size:16px}
+.report p.muted{margin:0;font-size:13px}
 .tabs{display:flex;gap:6px;margin:0 0 14px;border-bottom:2px solid var(--line)}
 .tabs button{appearance:none;border:0;background:transparent;color:var(--muted);font:600 15px var(--f-body);padding:10px 16px;border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer}
 .tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
@@ -253,7 +261,7 @@ body.panel-open #installBtn{display:none!important}
   </section>
 
   <section class="ledger" aria-label="Receipts">
-    <div class="tabs" id="tabs" role="tablist"><button type="button" data-tab="p" class="on" role="tab">Purchases (receipts)</button><button type="button" data-tab="s" role="tab">Sales (invoices I issued)</button></div>
+    <div class="tabs" id="tabs" role="tablist"><button type="button" data-tab="p" class="on" role="tab">Purchases (receipts)</button><button type="button" data-tab="s" role="tab">Sales (invoices I issued)</button><button type="button" data-tab="v" role="tab">VAT (2550Q)</button><button type="button" data-tab="i" role="tab">Income tax (1701)</button></div>
     <div class="bar">
       <h2 id="ledgerTitle">Receipts</h2>
       <div class="filters">
@@ -262,13 +270,13 @@ body.panel-open #installBtn{display:none!important}
           <select id="fQ"><option value="">All quarters</option><option value="1">Q1 (Jan-Mar)</option><option value="2">Q2 (Apr-Jun)</option><option value="3">Q3 (Jul-Sep)</option><option value="4">Q4 (Oct-Dec)</option></select>
         </label>
         <label class="f" id="byWrap" hidden>Account<select id="fBy"><option value="">All accounts</option></select></label>
-        <label class="f search">Search<input id="fSearch" type="search" placeholder="Supplier, TIN or invoice no."></label>
+        <label class="f search" id="searchWrap">Search<input id="fSearch" type="search" placeholder="Supplier, TIN or invoice no."></label>
         <div class="seg" id="lockSeg" role="group" aria-label="Show entries"><button type="button" data-lm="all" class="on">All entries</button><button type="button" data-lm="open">Not locked</button><button type="button" data-lm="locked">🔒 Locked</button></div>
       </div>
       <div class="bar-actions">
         <button class="btn primary" id="saleAddBtn" type="button" hidden>+ Add sales invoice</button>
         <button class="btn primary" id="exportBtn" type="button">Export Excel</button>
-        <label class="btn">Import Excel<input type="file" id="xlsIn" accept=".xlsx,.xls,.csv" hidden></label>
+        <label class="btn" id="impLbl">Import Excel<input type="file" id="xlsIn" accept=".xlsx,.xls,.csv" hidden></label>
         <button class="btn" id="tplBtn" type="button">Excel template</button>
         <button class="btn" id="backupBtn" type="button">Backup</button>
         <label class="btn">Restore<input type="file" id="restore" accept=".json,application/json" hidden></label>
@@ -313,6 +321,8 @@ body.panel-open #installBtn{display:none!important}
       </table>
       <div class="empty" id="sempty" hidden>No sales invoices for this period. Tap Add sales invoice.</div>
     </div>
+    <div class="report" id="vWrap" hidden></div>
+    <div class="report" id="iWrap" hidden></div>
   </section>
 </div>
 
@@ -775,8 +785,9 @@ function renderQueue(){
     return '<li class="qi '+it.status+'"><img src="'+(it.isPdf?(it.thumb||PDF_ICON):it.url)+'" alt=""><div style="min-width:0"><div class="qn">'+esc(it.file.name||'Receipt photo')+'</div><div class="qs" data-qs="'+it.id+'">'+s+'</div></div><div class="qa">'+a+'</div></li>';
   }).join('');
 }
-function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();if(curTab==='s'){renderSales()}else{renderStats();renderNotices();renderTable()}renderQueue()}
-function refreshMain(){if(curTab==='s')renderSales();else{renderStats();renderNotices();renderTable()}}
+function render(){$('#tbl').classList.toggle('master',masterOn);$('#byWrap').hidden=!masterOn;renderYears();mainView();renderQueue()}
+function mainView(){if(curTab==='s')renderSales();else if(curTab==='v')renderVat();else if(curTab==='i')renderItrTab();else{renderStats();renderNotices();renderTable()}}
+function refreshMain(){mainView()}
 
 /* ---------- scanning (OCR runs in this browser) ---------- */
 var worker=null,workerPromise=null,engineFail='';
@@ -1527,6 +1538,7 @@ function buildWorkbook(rows,srows){
   for(var c=1;c<=kl.length+1;c++){var s=0;for(var r2=s4-1;r2<a4.length;r2++){s+=Number(a4[r2][c].v)||0}tr4.push(N(s,a4.length>=s4?'SUM('+colL(c)+s4+':'+colL(c)+e4+')':null))}
   a4.push(tr4);
   XLSX.utils.book_append_sheet(wb,sheet(a4,[34].concat(kl.map(function(){return 14}),[16])),'ITR - By Category');
+  addItrSheet(wb);
   if(srows&&srows.length)addSalesSheets(wb,srows,rows);
   return wb;
 }
@@ -1584,10 +1596,12 @@ function renderSales(){
 function setTab(t){
   curTab=t;sel={};
   Array.prototype.forEach.call(document.querySelectorAll('#tabs button'),function(b){b.classList.toggle('on',b.dataset.tab===t)});
-  var s=t==='s';
-  $('#capSec').hidden=s;$('#pWrap').hidden=s;$('#sWrap').hidden=!s;$('#saleAddBtn').hidden=!s;
-  $('#ledgerTitle').textContent=s?'Sales invoices':'Receipts';
-  $('#fSearch').placeholder=s?'Client, TIN or invoice no.':'Supplier, TIN or invoice no.';
+  var p=t==='p',sl=t==='s',v=t==='v',it=t==='i';
+  $('#capSec').hidden=!p;$('#pWrap').hidden=!p;$('#sWrap').hidden=!sl;$('#vWrap').hidden=!v;$('#iWrap').hidden=!it;
+  $('#saleAddBtn').hidden=!sl;$('#stats').hidden=v||it;$('#searchWrap').hidden=v||it;$('#impLbl').hidden=v||it;$('#tplBtn').hidden=v||it;
+  if(v||it)$('#notices').innerHTML='';
+  $('#ledgerTitle').textContent=p?'Receipts':sl?'Sales invoices':v?'VAT, Form 2550Q':'Income tax, Form 1701';
+  $('#fSearch').placeholder=sl?'Client, TIN or invoice no.':'Supplier, TIN or invoice no.';
   render();
 }
 $('#tabs').addEventListener('click',function(e){var b=e.target.closest('button[data-tab]');if(b)setTab(b.dataset.tab)});
@@ -1950,6 +1964,107 @@ $('#tplBtn').onclick=function(){
   var out;try{out=XLSX.write(wb,{bookType:'xlsx',type:'array'})}catch(e){toast('Could not build the template.');return}
   saveFile(s?'resibo-sales-template.xlsx':'resibo-purchases-template.xlsx',out,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 };
+
+/* ---------- income tax estimate: BIR 1701 / 1701Q, graduated rates, itemized deductions ---------- */
+function gradTax(x){x=Math.max(0,x);if(x<=250000)return 0;if(x<=400000)return (x-250000)*0.15;if(x<=800000)return 22500+(x-400000)*0.20;if(x<=2000000)return 102500+(x-800000)*0.25;if(x<=8000000)return 402500+(x-2000000)*0.30;return 2202500+(x-8000000)*0.35}
+function itrYear(){
+  var y=$('#fYear').value;if(y)return y;
+  var ys=[];(masterOn?masterRows:state.receipts).forEach(function(r){if(validDate(r.date))ys.push(r.date.slice(0,4))});
+  ys.sort();return ys.length?ys[ys.length-1]:'';
+}
+function itrRows(y){
+  if(!y)return [];
+  var by=masterOn?$('#fBy').value:'';
+  var ok=function(r){return validDate(r.date)&&r.date.slice(0,4)===y&&(!by||r.by===by)};
+  var q=[0,1,2,3].map(function(){return {inc:0,exp:0,ewt:0}});
+  salesAll().filter(ok).forEach(function(r){var i=qOf(r.date)-1;q[i].inc+=num(r.netAmount);q[i].ewt+=num(r.ewtAmount)});
+  srcRows().filter(ok).forEach(function(r){q[qOf(r.date)-1].exp+=deductible(r)});
+  var labels=['Q1 (Jan-Mar)','Q1-Q2 (Jan-Jun)','Q1-Q3 (Jan-Sep)','Full year (1701)'],out=[],ci=0,ce=0,cw=0,paid=0;
+  for(var i=0;i<4;i++){
+    ci+=q[i].inc;ce+=q[i].exp;cw+=q[i].ewt;
+    var net=Math.max(0,round2(ci-ce)),tax=round2(gradTax(net)),due=round2(tax-cw-paid);
+    out.push({label:labels[i],inc:round2(ci),exp:round2(ce),net:net,tax:tax,cw:round2(cw),paid:round2(paid),due:due});
+    paid+=Math.max(0,due);
+  }
+  return out;
+}
+function qSegHtml(){
+  var q=$('#fQ').value,l=[['','Whole year'],['1','Q1 Jan-Mar'],['2','Q2 Apr-Jun'],['3','Q3 Jul-Sep'],['4','Q4 Oct-Dec']];
+  return '<div class="seg qseg" role="group" aria-label="Quarter">'+l.map(function(x){return '<button type="button" data-q="'+x[0]+'"'+(x[0]===q?' class="on"':'')+'>'+x[1]+'</button>'}).join('')+'</div>';
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('.qseg button');if(!b)return;
+  $('#fQ').value=b.dataset.q;refreshMain();
+});
+function itrTableHtml(y,rows){
+  return '<table style="min-width:640px"><thead><tr><th>Cumulative to</th><th class="num">Sales (no VAT)</th><th class="num">Itemized expenses</th><th class="num">Net taxable income</th><th class="num">Income tax</th><th class="num">Withheld (2307)</th><th class="num">Paid earlier</th><th class="num">Tax due</th></tr></thead><tbody>'+
+    rows.map(function(r,i){return '<tr'+(r.label.indexOf('Full year')===0?' class="tot"':'')+'><td>'+esc(r.label)+'</td><td class="num">'+fmt(r.inc)+'</td><td class="num">'+fmt(r.exp)+'</td><td class="num">'+fmt(r.net)+'</td><td class="num">'+fmt(r.tax)+'</td><td class="num">'+fmt(r.cw)+'</td><td class="num">'+fmt(r.paid)+'</td><td class="num"><b>'+fmt(r.due)+'</b></td></tr>'}).join('')+'</tbody></table>';
+}
+function renderItrTab(){
+  var y=itrYear(),all=itrRows(y),qn=Number($('#fQ').value)||0;
+  if(!y){$('#iWrap').innerHTML='<p class="muted">Add some dated sales and receipts to see the income tax estimate.</p>';return}
+  var rows=qn?[all[qn-1]]:all,cols=qn?[qn-1]:[0,1,2,3];
+  var by=masterOn?$('#fBy').value:'',ok=function(r){return validDate(r.date)&&r.date.slice(0,4)===y&&(!by||r.by===by)&&(lockMode==='all'||(lockMode==='locked')===!!r.locked)};
+  var P=srcRows().filter(ok),S=salesAll().filter(ok);
+  var sv=[0,0,0,0],gv=[0,0,0,0];
+  S.forEach(function(r){var i=qOf(r.date)-1;if(r.saleOf==='goods')gv[i]+=num(r.netAmount);else sv[i]+=num(r.netAmount)});
+  var cat={};P.forEach(function(r){var c=r.category||'Miscellaneous';cat[c]=cat[c]||[0,0,0,0];cat[c][qOf(r.date)-1]+=deductible(r)});
+  var cs=Object.keys(cat).sort(),tq=[0,0,0,0];
+  var th=cols.map(function(i){return '<th class="num">Q'+(i+1)+'</th>'}).join('')+'<th class="num">Total</th>';
+  var sum=function(a){return cols.reduce(function(t,i){return t+a[i]},0)};
+  var row=function(l,a,c){return '<tr'+(c?' class="'+c+'"':'')+'><td class="k">'+esc(l)+'</td>'+cols.map(function(i){return '<td class="num">'+fmt(a[i])+'</td>'}).join('')+'<td class="num">'+fmt(sum(a))+'</td></tr>'};
+  cs.forEach(function(c){for(var i=0;i<4;i++)tq[i]+=cat[c][i]});
+  $('#iWrap').innerHTML=qSegHtml()+
+    '<div><h3>Income tax estimate for '+esc(y)+(qn?', Q'+qn+' (1701Q, cumulative from January)':' (graduated rates, itemized deductions)')+'</h3><div class="box">'+itrTableHtml(y,rows)+'</div>'+
+    '<p class="muted" style="margin-top:8px">Sales are counted without VAT. Expenses are what you paid minus the input VAT you claimed. Income tax uses the 2023 graduated table for individuals (first 250,000 free). The 1701Q is cumulative, so a quarter row includes every quarter before it. A negative tax due means your credits are more than the tax. This is an estimate: capital goods are not depreciated here, and other credits or deductions are not included. Check it with your accountant before you file.</p></div>'+
+    '<div><h3>Sales '+(qn?'in Q'+qn:'by quarter')+', '+esc(y)+' (VAT excluded)</h3><div class="box"><table><thead><tr><th>Sales of</th>'+th+'</tr></thead><tbody>'+row('Services',sv)+row('Goods',gv)+row('Total sales',[sv[0]+gv[0],sv[1]+gv[1],sv[2]+gv[2],sv[3]+gv[3]],'tot')+'</tbody></table></div></div>'+
+    '<div><h3>Itemized expenses '+(qn?'in Q'+qn:'by category')+', '+esc(y)+'</h3><div class="box"><table><thead><tr><th>Category</th>'+th+'</tr></thead><tbody>'+(cs.length?cs.map(function(c){return row(c,cat[c])}).join('')+row('Total expenses',tq,'tot'):'<tr><td colspan="6" class="muted">No receipts in this year.</td></tr>')+'</tbody></table></div></div>';
+}
+function vatCalc(P,S){
+  var o={sv:[0,0],gv:[0,0],zr:0,ex:0,nv:0,cl:{goods:[0,0],services:[0,0],capital:[0,0]},unNet:0,unVat:0,pex:0,pzr:0};
+  S.forEach(function(r){var n=num(r.netAmount);
+    if(r.saleType==='vatable'){var x=r.saleOf==='goods'?o.gv:o.sv;x[0]+=n;x[1]+=num(r.vatAmount)}
+    else if(r.saleType==='zero')o.zr+=n;else if(r.saleType==='exempt')o.ex+=n;else o.nv+=n});
+  P.forEach(function(r){o.pex+=num(r.exempt);o.pzr+=num(r.zeroRated);
+    if(r.claimVat){var c=o.cl[r.purchaseType]||o.cl.goods;c[0]+=netVatable(r);c[1]+=claimed(r)}else{o.unNet+=netVatable(r);o.unVat+=num(r.vatAmount)}});
+  o.out=o.sv[1]+o.gv[1];o.inp=o.cl.goods[1]+o.cl.services[1]+o.cl.capital[1];o.payable=o.out-o.inp;
+  o.salesTotal=o.sv[0]+o.gv[0]+o.zr+o.ex+o.nv;o.purchTotal=o.cl.goods[0]+o.cl.services[0]+o.cl.capital[0];
+  return o;
+}
+function renderVat(){
+  var P=periodRows(),S=salesPeriod(),o=vatCalc(P,S);
+  var r2=function(l,a,b,c){return '<tr'+(c?' class="'+c+'"':'')+'><td class="k">'+esc(l)+'</td><td class="num">'+(a==null?'':fmt(a))+'</td><td class="num">'+(b==null?'':fmt(b))+'</td></tr>'};
+  var groups={};
+  P.forEach(function(r){var k=validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date';(groups[k]=groups[k]||{P:[],S:[]}).P.push(r)});
+  S.forEach(function(r){var k=validDate(r.date)?r.date.slice(0,4)+' Q'+qOf(r.date):'No date';(groups[k]=groups[k]||{P:[],S:[]}).S.push(r)});
+  var gk=Object.keys(groups).sort();
+  $('#vWrap').innerHTML=qSegHtml()+
+    '<div><h3>2550Q worksheet, '+esc(periodLabel())+'</h3><div class="box"><table><thead><tr><th>Sales and output VAT</th><th class="num">Net sales</th><th class="num">Output VAT</th></tr></thead><tbody>'+
+      r2('Vatable sales, services',o.sv[0],o.sv[1])+r2('Vatable sales, goods',o.gv[0],o.gv[1])+r2('Zero-rated sales',o.zr,null)+r2('VAT-exempt sales',o.ex,null)+r2('Not subject to VAT (non-VAT)',o.nv,null)+r2('Total sales and output VAT',o.salesTotal,o.out,'tot')+
+    '</tbody></table></div></div>'+
+    '<div><div class="box"><table><thead><tr><th>Purchases and input VAT claimed</th><th class="num">Net purchases</th><th class="num">Input VAT</th></tr></thead><tbody>'+
+      r2('Goods other than capital goods',o.cl.goods[0],o.cl.goods[1])+r2('Services',o.cl.services[0],o.cl.services[1])+r2('Capital goods',o.cl.capital[0],o.cl.capital[1])+r2('Total input VAT claimed',o.purchTotal,o.inp,'tot')+
+      r2('Exempt purchases, including non-VAT suppliers',o.pex,null)+r2('Zero-rated purchases',o.pzr,null)+r2('Taxable purchases with no input VAT claimed',o.unNet,o.unVat)+
+    '</tbody></table></div></div>'+
+    '<div><div class="box"><table><tbody class="big">'+r2('Output VAT',null,o.out)+r2('Less: input VAT claimed',null,o.inp)+r2(o.payable<0?'Excess input VAT':'VAT payable',null,o.payable,'tot')+'</tbody></table></div>'+
+    '<p class="muted" style="margin-top:8px">Input VAT carried over from earlier quarters is not included. Compare each line with your 2550Q before you encode it. Pick a quarter and year above to match one filing.</p></div>'+
+    (gk.length>1?'<div><h3>By quarter</h3><div class="box"><table><thead><tr><th>Quarter</th><th class="num">Net sales</th><th class="num">Output VAT</th><th class="num">Net purchases (claimed)</th><th class="num">Input VAT claimed</th><th class="num">VAT payable</th></tr></thead><tbody>'+
+      gk.map(function(k){var q=vatCalc(groups[k].P,groups[k].S);return '<tr><td class="k">'+esc(k)+'</td><td class="num">'+fmt(q.salesTotal)+'</td><td class="num">'+fmt(q.out)+'</td><td class="num">'+fmt(q.purchTotal)+'</td><td class="num">'+fmt(q.inp)+'</td><td class="num"><b>'+fmt(q.payable)+'</b></td></tr>'}).join('')+'</tbody></table></div></div>':'');
+}
+function addItrSheet(wb){
+  var tp=state.settings,y=itrYear(),rows=itrRows(y);
+  var a=[[C('INCOME TAX ESTIMATE, BIR 1701 / 1701Q (graduated rates, itemized deductions)')],[C('Taxpayer'),C(tp.name)],[C('TIN'),C(tp.tin)],[C('Year'),C(y)],[],
+    ['Cumulative to','Sales (VAT excluded)','Itemized deductions','Net taxable income','Income tax (graduated)','Less: withheld (Form 2307)','Less: paid in earlier quarters','Tax due / (overpayment)'].map(C)];
+  rows.forEach(function(r,i){
+    var n=7+i,d='D'+n;
+    var f='IF('+d+'<=250000,0,IF('+d+'<=400000,('+d+'-250000)*0.15,IF('+d+'<=800000,22500+('+d+'-400000)*0.2,IF('+d+'<=2000000,102500+('+d+'-800000)*0.25,IF('+d+'<=8000000,402500+('+d+'-2000000)*0.3,2202500+('+d+'-8000000)*0.35)))))';
+    a.push([C(r.label),N(r.inc),N(r.exp),N(r.net,'MAX(0,B'+n+'-C'+n+')'),N(r.tax,f),N(r.cw),N(r.paid,i?('G'+(n-1)+'+MAX(0,H'+(n-1)+')'):null),N(r.due,'E'+n+'-F'+n+'-G'+n)]);
+  });
+  a.push([]);
+  a.push([C('Sales are without VAT. Deductions are the amounts paid minus the input VAT you claimed on the 2550Q. Rates: 0% up to 250,000; 15% over 250,000; 22,500 + 20% over 400,000; 102,500 + 25% over 800,000; 402,500 + 30% over 2,000,000; 2,202,500 + 35% over 8,000,000.')]);
+  a.push([C('Estimate only. Capital goods are not depreciated here and other credits are not included. Confirm with your accountant before filing the 1701 or 1701Q.')]);
+  XLSX.utils.book_append_sheet(wb,sheet(a,[22,20,20,20,20,22,24,22]),'ITR - 1701 Estimate');
+}
 
 /* ---------- boot ---------- */
 load();syncSettings();render();
