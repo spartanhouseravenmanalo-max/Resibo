@@ -139,6 +139,8 @@ tbody tr:hover{background:var(--surface2)}
 tbody tr.is-review td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 tfoot td{font-weight:600;background:var(--surface2);border-bottom:0}
 .sup{font-weight:500}
+.lock-note{margin:0 0 14px;padding:10px 12px;border-radius:10px;background:#fff4d6;color:#6b4b00;font-size:14px;line-height:1.4}
+.lk{display:inline-block;margin-left:6px;font-size:12px;opacity:.8}
 .sub{font-size:12.5px;color:var(--muted)}
 .chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:500;white-space:nowrap}
 .chip.ok{background:var(--ok-soft);color:var(--ok)}
@@ -282,6 +284,7 @@ body.panel-open #installBtn{display:none!important}
       <figure id="shot" hidden><img id="shotImg" alt="Receipt photo"><figcaption>This photo is only kept while the page is open.</figcaption></figure>
       <ul class="flags" id="flags"></ul>
       <details id="ocrBox" class="tp" hidden><summary>Text read from the photo</summary><pre id="ocrText" style="white-space:pre-wrap;font:12px/1.4 var(--f-mono);margin:8px 0 0;max-height:220px;overflow:auto"></pre></details>
+      <div id="lockNote" class="lock-note" hidden></div>
       <form id="form" autocomplete="off" onsubmit="return false">
         <fieldset>
           <legend>Receipt</legend>
@@ -293,9 +296,9 @@ body.panel-open #installBtn{display:none!important}
         </fieldset>
         <fieldset style="margin-top:18px">
           <legend>Supplier</legend>
-          <label class="f">Registered name<input data-k="supplier" id="f_supplier"></label>
+          <label class="f">Registered name<input data-k="supplier" id="f_supplier" list="supList" autocomplete="off" placeholder="Start typing to pick a saved supplier"><datalist id="supList"></datalist></label>
           <div class="row">
-            <label class="f">Supplier TIN<input data-k="tin" id="f_tin" placeholder="000-000-000-00000" inputmode="numeric"></label>
+            <label class="f">Supplier TIN<input data-k="tin" id="f_tin" list="tinList" autocomplete="off" placeholder="000-000-000-00000" inputmode="numeric"><datalist id="tinList"></datalist></label>
             <label class="f">Registration<select data-k="supplierVat" id="f_supplierVat"><option value="VAT">VAT registered</option><option value="NON-VAT">Non-VAT</option></select></label>
           </div>
           <label class="f">Address<input data-k="address" id="f_address"></label>
@@ -335,6 +338,7 @@ body.panel-open #installBtn{display:none!important}
     </div>
     <footer>
       <button class="btn danger" id="delBtn" type="button">Delete</button>
+      <button class="btn" id="lockBtn" type="button">Lock</button>
       <span class="grow"></span>
       <button class="btn" id="cancelBtn" type="button">Cancel</button>
       <button class="btn primary" id="saveBtn" type="button">Save receipt</button>
@@ -432,7 +436,8 @@ function toast(msg){var t=$('#toast');t.classList.toggle('top',!$('#sheet').hidd
 /* ---------- model ---------- */
 function blank(){return {id:'',date:'',supplier:'',tin:'',address:'',invoiceNo:'',docType:'Sales Invoice',supplierVat:'VAT',buyerShown:false,
   grossVatable:0,vatAmount:0,exempt:0,zeroRated:0,printedTotal:0,description:'',category:'Miscellaneous',purchaseType:'goods',purpose:'',claimVat:false,
-  reviewed:false,source:'manual',added:Date.now()}}
+  reviewed:false,source:'manual',locked:false,lockedBy:'',lockedByMaster:false,added:Date.now()}}
+function canUnlock(r){return !r.locked||masterOn||!r.lockedByMaster}
 function total(r){return round2(num(r.grossVatable)+num(r.exempt)+num(r.zeroRated))}
 function netVatable(r){return round2(num(r.grossVatable)-num(r.vatAmount))}
 function claimed(r){return r.claimVat?round2(num(r.vatAmount)):0}
@@ -576,7 +581,7 @@ function renderTable(){
     var vatNote=num(r.vatAmount)>0?'<div class="sub" style="font-family:var(--f-body)">'+(r.claimVat?'claimed':'not claimed')+'</div>':'';
     return '<tr data-id="'+esc(r._path||r.id)+'" class="'+(r.reviewed?'':'is-review')+'">'+
       '<td class="mono">'+esc(r.date||'No date')+'</td>'+'<td class="by sub">'+esc(r.by||'')+'</td>'+
-      '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
+      '<td><div class="sup">'+esc(r.supplier||'(no supplier)')+(r.locked?'<span class="lk" title="Locked">\uD83D\uDD12</span>':'')+'</div><div class="sub mono">'+esc(r.tin||'no TIN')+'</div></td>'+
       '<td class="mono">'+esc(r.invoiceNo||'-')+'</td>'+
       '<td class="num">'+fmt(total(r))+'</td>'+
       '<td class="num">'+(num(r.vatAmount)>0?fmt(r.vatAmount):'-')+vatNote+'</td>'+
@@ -964,6 +969,55 @@ function updateDerived(){
   (draft.ocrNotes||[]).forEach(function(n){f.unshift(['warn',n])});
   $('#flags').innerHTML=f.length?f.map(function(x){return '<li class="'+x[0]+'">'+esc(x[1])+'</li>'}).join(''):'<li class="good">Nothing to fix. The amounts and details are consistent.</li>';
 }
+/* ---------- saved suppliers (built from the receipts you already encoded) ---------- */
+function tinKey(t){return String(t||'').replace(/\D/g,'')}
+function supplierList(){
+  var map={};
+  srcRows().forEach(function(r){
+    if(r.source==='example'||(!r.supplier&&!r.tin))return;
+    var key=tinKey(r.tin).length>=9?tinKey(r.tin):('n:'+String(r.supplier).trim().toLowerCase());
+    var cur=map[key],stamp=(r.date||'')+String(r.added||0);
+    if(!cur||stamp>cur.stamp)map[key]={stamp:stamp,name:r.supplier||'',tin:r.tin||'',address:r.address||'',supplierVat:r.supplierVat||'VAT',category:r.category||'Miscellaneous',purchaseType:r.purchaseType||'goods',count:0};
+    map[key].count=(map[key].count||0)+1;
+  });
+  return Object.keys(map).map(function(k){return map[k]}).sort(function(a,b){return a.name.localeCompare(b.name)});
+}
+function fillSupplierLists(){
+  var l=supplierList();
+  $('#supList').innerHTML=l.filter(function(x){return x.name}).map(function(x){return '<option value="'+esc(x.name)+'">'+esc((x.tin||'no TIN')+' · '+x.category)+'</option>'}).join('');
+  $('#tinList').innerHTML=l.filter(function(x){return x.tin}).map(function(x){return '<option value="'+esc(x.tin)+'">'+esc(x.name)+'</option>'}).join('');
+}
+function applySupplier(by,val){
+  if(!draft)return false;
+  var v=String(val||'').trim().toLowerCase(),vk=tinKey(val);
+  var hit=supplierList().filter(function(x){return by==='name'?(v&&x.name.trim().toLowerCase()===v):(vk.length>=9&&tinKey(x.tin)===vk)})[0];
+  if(!hit)return false;
+  var set=function(k,v2,force){if(v2==null||v2==='')return;if(!force&&draft[k]&&draft[k]!==blank()[k])return;draft[k]=v2;setField(k,v2)};
+  set('supplier',hit.name,by==='tin');set('tin',hit.tin,by==='name');set('address',hit.address,true);
+  draft.supplierVat=hit.supplierVat;setField('supplierVat',hit.supplierVat);
+  draft.category=hit.category;setField('category',hit.category);
+  draft.purchaseType=hit.purchaseType;setField('purchaseType',hit.purchaseType);
+  if(!draft._vat&&draft.supplierVat==='VAT'){draft.vatAmount=round2(num(draft._net)*0.12);setField('vatAmount',draft.vatAmount);draft.grossVatable=round2(num(draft._net)+num(draft.vatAmount))}
+  updateDerived();
+  return true;
+}
+function applyLock(){
+  var r=draft||{},lk=!!r.locked;
+  Array.prototype.forEach.call(document.querySelectorAll('#form input,#form select,#form textarea'),function(el){el.disabled=lk});
+  $('#saveBtn').hidden=lk;$('#delBtn').hidden=lk||isNew;
+  $('#lockBtn').hidden=isNew&&!lk;
+  $('#lockBtn').textContent=lk?'Unlock':'Lock';
+  $('#lockBtn').disabled=lk&&!canUnlock(r);
+  var n=$('#lockNote');
+  if(lk){n.hidden=false;n.textContent='This receipt is locked'+(r.lockedBy?' by '+r.lockedBy:'')+'. It cannot be edited or deleted until it is unlocked.'+(canUnlock(r)?'':' Only the master account can unlock it.')}
+  else n.hidden=true;
+}
+function commitReceipt(r){
+  if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);return}
+  var i=state.receipts.findIndex(function(x){return x.id===r.id});
+  if(i>=0)state.receipts[i]=r;else state.receipts.push(r);
+  persist();render();
+}
 function openSheet(id,opts){
   opts=opts||{};
   lastFocus=document.activeElement;
@@ -978,7 +1032,7 @@ function openSheet(id,opts){
   $('#sheetTitle').textContent=isNew?'New receipt':(ex.reviewed?'Edit receipt':'Check receipt');
   $('#saveBtn').textContent=isNew?'Add receipt':'Save receipt';
   $('#delBtn').hidden=isNew;delArmed=false;$('#delBtn').textContent='Delete';
-  fillForm();updateDerived();
+  fillForm();fillSupplierLists();updateDerived();applyLock();
   if(masterOn&&ex){$('#sheetTitle').textContent='Edit receipt from '+(ex.by||'an account')}
   $('#sheet').hidden=false;document.body.style.overflow='hidden';syncPanelFlag();
   setTimeout(function(){$('#f_date').focus({preventScroll:true})},30);
@@ -1011,10 +1065,11 @@ $('#form').addEventListener('input',function(e){
 });
 $('#form').addEventListener('change',function(e){
   var t=e.target;
-  if(t.dataset&&t.dataset.k==='tin'&&draft){draft.tin=fmtTin(t.value);t.value=draft.tin;updateDerived()}
+  if(t.dataset&&t.dataset.k==='supplier'&&draft){if(applySupplier('name',t.value))toast('Filled in from your saved supplier.')}
+  if(t.dataset&&t.dataset.k==='tin'&&draft){draft.tin=fmtTin(t.value);t.value=draft.tin;updateDerived();if(applySupplier('tin',t.value))toast('Filled in from your saved supplier.')}
 });
 $('#saveBtn').onclick=function(){
-  if(!draft)return;
+  if(!draft||draft.locked)return;
   var r=Object.assign({},draft);delete r._vat;delete r._net;
   r.supplier=r.supplier.trim();r.invoiceNo=r.invoiceNo.trim();r.tin=fmtTin(r.tin);
   r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
@@ -1024,11 +1079,27 @@ $('#saveBtn').onclick=function(){
   persist();closeSheet();render();toast(isNew?'Receipt added.':'Receipt saved.');
 };
 $('#delBtn').onclick=function(){
-  if(!draft)return;
+  if(!draft||draft.locked)return;
   if(!delArmed){delArmed=true;$('#delBtn').textContent='Confirm delete';return}
   if(masterOn&&window.__rsbMasterDelete){window.__rsbMasterDelete(draft._path);closeSheet();toast('Receipt deleted.');return}
   var id=draft.id;state.receipts=state.receipts.filter(function(r){return r.id!==id});
   persist();closeSheet();render();toast('Receipt deleted.');
+};
+$('#lockBtn').onclick=function(){
+  if(!draft)return;
+  var r=Object.assign({},draft);delete r._vat;delete r._net;
+  if(r.locked){
+    if(!canUnlock(r)){toast('Only the master account can unlock this receipt.');return}
+    r.locked=false;r.lockedBy='';r.lockedByMaster=false;
+  }else{
+    r.supplier=(r.supplier||'').trim();r.invoiceNo=(r.invoiceNo||'').trim();r.tin=fmtTin(r.tin);
+    r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
+    r.locked=true;r.lockedByMaster=!!masterOn;
+    r.lockedBy=(window.__rsbUser&&window.__rsbUser())||'this device';
+  }
+  commitReceipt(r);
+  if(r.locked){closeSheet();toast('Receipt locked.')}
+  else{draft=Object.assign({},r,{_net:netVatable(r),_vat:draft._vat});applyLock();toast('Receipt unlocked. You can edit it now.')}
 };
 $('#cancelBtn').onclick=closeSheet;$('#closeSheet').onclick=closeSheet;$('#scrim').onclick=closeSheet;
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){if(!$('#camSheet').hidden)stopCam();else if(!$('#sheet').hidden)closeSheet()}});
@@ -1408,6 +1479,7 @@ function pushDiff(){
   }
 }
 window.__rsbPush=pushDiff;
+window.__rsbUser=function(){return user&&user.email||''};
 window.__rsbMasterSave=function(r){
   if(!db||!user||!r._path)return;
   var d=cloudForm(r);d.editedBy=user.email||'';d.editedAt=Date.now();
