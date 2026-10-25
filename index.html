@@ -648,7 +648,7 @@ function load(){
   var raw=null;
   try{raw=localStorage.getItem(LS_KEY)}catch(e){storageOK=false}
   if(raw){
-    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:'',vatCarry:{},taxSize:'small'},s.settings||{});return}}catch(e){}
+    try{var s=JSON.parse(raw);if(s&&Array.isArray(s.receipts)){state.receipts=s.receipts;state.settings=Object.assign({name:'',tin:'',pinHash:'',pinSalt:'',vatCarry:{},taxSize:'small',filings:{},qlocks:{}},s.settings||{});return}}catch(e){}
   }
   var ex=blank();
   Object.assign(ex,{id:uid(),date:'2024-03-24',supplier:'Hard Discount Philippines, Inc.',tin:'748-940-479-00378',
@@ -1312,6 +1312,7 @@ $('#form').addEventListener('change',function(e){
 });
 $('#saveBtn').onclick=function(){
   if(!draft||draft.locked)return;
+  if(blockClosed(draft.date))return;
   var r=Object.assign({},draft);delete r._vat;delete r._net;
   r.supplier=r.supplier.trim();r.invoiceNo=r.invoiceNo.trim();r.tin=fmtTin(r.tin);
   r.reviewed=true;if(r.source==='example')r.source='manual';r.ocrNotes=[];
@@ -1711,6 +1712,7 @@ $('#saleForm').addEventListener('change',function(e){
 });
 $('#saleSave').onclick=function(){
   if(!sdraft||sdraft.locked)return;
+  if(blockClosed(sdraft.date))return;
   var r=Object.assign({},sdraft);delete r._vat;delete r._ewt;
   r.client=String(r.client||'').trim();r.invoiceNo=String(r.invoiceNo||'').trim();r.tin=fmtTin(r.tin);r.kind='sale';r.reviewed=true;
   if(masterOn&&window.__rsbMasterSave){window.__rsbMasterSave(r);closeSale();toast('Saved to '+(r.by||'the account')+' list.');return}
@@ -1922,12 +1924,14 @@ function doImport(aoa,kind){
   if(res.error){toast('Could not find the columns. Download the Excel template, copy your entries into it, and import again.');return null}
   var have={};state.receipts.forEach(function(r){have[dupKey(r)]=1});
   var added=0,dups=0;
+  var closed=0;
   res.rows.forEach(function(r){
     if(r.invoiceNo&&have[dupKey(r)]){dups++;return}
+    var ck=qKey(r.date);if(ck&&qLocks()[ck]){closed++;return}
     state.receipts.push(r);added++;
   });
   persist();render();
-  var msg=added+' '+(kind==='s'?'sales invoice':'receipt')+(added===1?'':'s')+' imported'+(dups?', '+dups+' already saved and skipped':'')+(res.noDate?'. '+res.noDate+' had no readable date, so fill those in':'')+'.';
+  var msg=added+' '+(kind==='s'?'sales invoice':'receipt')+(added===1?'':'s')+' imported'+(dups?', '+dups+' already saved and skipped':'')+(closed?', '+closed+' skipped because their quarter is locked':'')+(res.noDate?'. '+res.noDate+' had no readable date, so fill those in':'')+'.';
   if(res.noTin)msg+=' '+res.noTin+' have no TIN.';
   if(kind!=='s'&&res.noClaim)msg+=' Input VAT was not claimed for '+res.noClaim+' rows with no Yes/No answer.';
   toast(msg);
@@ -2021,6 +2025,7 @@ function renderItrTab(){
   $('#iWrap').innerHTML=qSegHtml()+
     '<div><h3>Income tax estimate for '+esc(y)+(qn?', Q'+qn+' (1701Q, cumulative from January)':' (graduated rates, itemized deductions)')+'</h3><div class="box">'+itrTableHtml(y,rows)+'</div>'+
     '<p class="muted" style="margin-top:8px">Sales are counted without VAT. Expenses are what you paid minus the input VAT you claimed. Income tax uses the 2023 graduated table for individuals (first 250,000 free). The 1701Q is cumulative, so a quarter row includes every quarter before it. A negative tax due means your credits are more than the tax. This is an estimate: capital goods are not depreciated here, and other credits or deductions are not included. Check it with your accountant before you file.</p></div>'+
+    (function(){var an=!(qn&&qn<4);return an?filingHtml('1701',y,[y+'-1',y+'-2',y+'-3',y+'-4'],y):filingHtml('1701Q',y+'-'+qn,[y+'-'+qn],qLabel(y+'-'+qn))})()+
     (function(){var row=qn&&qn<4?all[qn-1]:all[3];return penaltyHtml(qn&&qn<4?'1701Q':'1701',y,qn&&qn<4?qn:4,Math.max(0,row.due),row.inc)})()+
     '<div><h3>Sales '+(qn?'in Q'+qn:'by quarter')+', '+esc(y)+' (VAT excluded)</h3><div class="box"><table><thead><tr><th>Sales of</th>'+th+'</tr></thead><tbody>'+row('Services',sv)+row('Goods',gv)+row('Total sales',[sv[0]+gv[0],sv[1]+gv[1],sv[2]+gv[2],sv[3]+gv[3]],'tot')+'</tbody></table></div></div>'+
     '<div><h3>Itemized expenses '+(qn?'in Q'+qn:'by category')+', '+esc(y)+'</h3><div class="box"><table><thead><tr><th>Category</th>'+th+'</tr></thead><tbody>'+(cs.length?cs.map(function(c){return row(c,cat[c])}).join('')+row('Total expenses',tq,'tot'):'<tr><td colspan="6" class="muted">No receipts in this year.</td></tr>')+'</tbody></table></div></div>';
@@ -2076,6 +2081,7 @@ function renderVat(){
     '<div><div class="box"><table><tbody class="big">'+r2('Output VAT',null,o.out)+r2('Less: input VAT claimed',null,o.inp)+carryRow+
       r2('Add back: excess input VAT carried to the next quarter',null,sc.cout)+(sc.adj?r2('Adjustment for the carry-over figures you typed',null,sc.adj):'')+r2('VAT payable',null,sc.pay,'tot')+'</tbody></table></div>'+
     '<p class="muted" style="margin-top:8px">If your input VAT is more than your output VAT, the extra is carried over to the next quarter and used there. It is worked out for you from the quarters you have saved. If you also have a balance from earlier quarters or years that is not saved here, pick that quarter and type the figure from your filed 2550Q. Compare each line with your 2550Q before you encode it.</p></div>'+
+    (one?filingHtml('2550Q',ok1,[ok1],qLabel(ok1)):'')+
     (one?penaltyHtml('2550Q',ok1.slice(0,4),ok1.slice(5),sc.pay,one.o.salesTotal):'<p class="muted">Pick one quarter above to estimate the penalty for filing the 2550Q late.</p>')+
     (sc.keys.length>1?'<div><h3>By quarter</h3><div class="box"><table><thead><tr><th>Quarter</th><th class="num">Net sales</th><th class="num">Output VAT</th><th class="num">Input VAT claimed</th><th class="num">Carried in</th><th class="num">VAT payable</th><th class="num">Carried to next</th></tr></thead><tbody>'+
       sc.keys.map(function(k){var q=sc.chain[k];return '<tr><td class="k">'+esc(k.replace('-',' Q'))+'</td><td class="num">'+fmt(q.o.salesTotal)+'</td><td class="num">'+fmt(q.o.out)+'</td><td class="num">'+fmt(q.o.inp)+'</td><td class="num">'+fmt(q.cin)+'</td><td class="num"><b>'+fmt(q.pay)+'</b></td><td class="num">'+fmt(q.cout)+'</td></tr>'}).join('')+'</tbody></table></div></div>':'');
@@ -2121,7 +2127,8 @@ function compTaxDue(t){var b=[[5000,1000],[10000,3000],[20000,5000],[50000,10000
 function compNoTax(g){var b=[[50000,1000],[100000,3000],[500000,5000],[5000000,10000],[10000000,15000],[25000000,20000]];for(var i=0;i<b.length;i++)if(g<=b[i][0])return b[i][1];return 25000}
 function penaltyHtml(form,year,q,tax,gross){
   var dd=dueDateFor(form,year,q);if(!dd)return '';
-  var pay=penDate||todayISO(),small=state.settings.taxSize!=='large';
+  var rec=filings()[form+'|'+(form==='1701'?String(year):year+'-'+q)]||null,fixed=!!rec;
+  var pay=rec?rec.date:(penDate||todayISO()),small=state.settings.taxSize!=='large';
   var days=Math.max(0,diffDays(dd.due,pay)),late=days>0;
   tax=Math.max(0,round2(tax));
   var sur=0,intr=0,comp=0;
@@ -2130,7 +2137,7 @@ function penaltyHtml(form,year,q,tax,gross){
   var shifted=dd.raw!==dd.due?' (the '+dd.raw+' deadline is a '+DOWN[isoDow(dd.raw)]+', so it moves to the next working day)':'';
   var r=function(l,v,c){return '<tr'+(c?' class="'+c+'"':'')+'><td class="k">'+esc(l)+'</td><td class="num">'+fmt(v)+'</td></tr>'};
   return '<div><h3>If you file late, Form '+esc(form)+' '+(form==='1701'?esc(year):esc(year)+' Q'+q)+'</h3>'+
-    '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px"><label class="f">Date you file and pay<input type="date" id="penDate" value="'+esc(pay)+'"></label>'+
+    '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px"><label class="f">'+(fixed?'Date you filed and paid (from your filing record)':'Date you file and pay')+'<input type="date" id="penDate" value="'+esc(pay)+'"'+(fixed?' disabled':'')+'></label>'+
     '<label class="f">Taxpayer size<select id="taxSize"><option value="small"'+(small?' selected':'')+'>Micro or small (sales under 20 million)</option><option value="large"'+(small?'':' selected')+'>Medium or large</option></select></label></div>'+
     '<p class="muted" style="margin-bottom:8px">Deadline: <b>'+esc(dd.due)+'</b>'+esc(shifted)+'. '+(late?'You are '+days+' day'+(days>1?'s':'')+' late.':'This date is not late, so there is no penalty.')+'</p>'+
     '<div class="box"><table><tbody>'+r('Tax due',tax)+(late?(tax>0?r('Surcharge ('+(small?'10':'25')+'%)',sur)+r('Interest ('+(small?'6':'12')+'% a year, '+days+' days)',intr):'')+r(tax>0?'Compromise penalty':'Compromise penalty (no tax due, based on sales)',comp):'')+r('Total to pay',total,'tot')+'</tbody></table></div>'+
@@ -2140,6 +2147,68 @@ document.addEventListener('change',function(e){
   var t=e.target;if(!t)return;
   if(t.id==='penDate'){penDate=t.value;mainView()}
   else if(t.id==='taxSize'){state.settings.taxSize=t.value;persist();mainView()}
+});
+
+/* ---------- filing record and lock per quarter ---------- */
+function qKey(d){return validDate(d)?d.slice(0,4)+'-'+qOf(d):null}
+function qLocks(){state.settings.qlocks=state.settings.qlocks||{};return state.settings.qlocks}
+function filings(){state.settings.filings=state.settings.filings||{};return state.settings.filings}
+function qLabel(k){return k.slice(0,4)+' Q'+k.slice(5)}
+function blockClosed(date){
+  var k=qKey(date);if(!k||!qLocks()[k])return false;
+  var f=filings(),dates=['2550Q|'+k,'1701Q|'+k].map(function(x){return f[x]&&f[x].date}).filter(Boolean);
+  toast(qLabel(k)+' is locked'+(dates.length?' (filed '+dates.join(', ')+')':'')+'. Unlock the quarter on the VAT or Income tax tab before you add or change entries in it.');
+  return true;
+}
+function qEntries(keys){return (masterOn?masterRows:state.receipts).filter(function(r){return keys.indexOf(qKey(r.date))>=0})}
+function lockQuarters(keys,date,form,fkey){
+  var who=(window.__rsbUser&&window.__rsbUser())||'this device',n=0;
+  qEntries(keys).forEach(function(r){
+    if(r.locked)return;
+    var c=Object.assign({},r,{locked:true,lockedBy:who,lockedByMaster:!!masterOn,lockedQ:qKey(r.date)});n++;
+    if(masterOn&&window.__rsbMasterSave)window.__rsbMasterSave(c);
+    else{var i=state.receipts.findIndex(function(x){return x.id===c.id});if(i>=0)state.receipts[i]=c}
+  });
+  keys.forEach(function(k){qLocks()[k]={at:Date.now(),by:who,byMaster:!!masterOn}});
+  filings()[form+'|'+fkey]={date:date,at:Date.now(),by:who};
+  persist();render();return n;
+}
+function unlockQuarters(keys){
+  var n=0;
+  qEntries(keys).forEach(function(r){
+    if(!r.locked||keys.indexOf(r.lockedQ)<0)return;
+    var c=Object.assign({},r,{locked:false,lockedBy:'',lockedByMaster:false,lockedQ:''});n++;
+    if(masterOn&&window.__rsbMasterSave)window.__rsbMasterSave(c);
+    else{var i=state.receipts.findIndex(function(x){return x.id===c.id});if(i>=0)state.receipts[i]=c}
+  });
+  keys.forEach(function(k){delete qLocks()[k]});
+  persist();render();return n;
+}
+function filingHtml(form,fkey,keys,label){
+  var rec=filings()[form+'|'+fkey]||null,ql=qLocks();
+  var locked=keys.every(function(k){return ql[k]});
+  var val=rec?rec.date:(penDate||todayISO());
+  var st=rec?'Filed and paid on <b>'+esc(rec.date)+'</b>.':'No filing date saved yet.';
+  if(locked){var q0=ql[keys[0]];st+=' Locked on '+esc(new Date(q0.at).toISOString().slice(0,10))+(q0.by?' by '+esc(q0.by):'')+'.'}
+  var attrs=' data-form="'+esc(form)+'" data-fkey="'+esc(fkey)+'" data-keys="'+esc(keys.join(','))+'"';
+  return '<div><h3>Filing record, Form '+esc(form)+' '+esc(label)+'</h3><p class="muted" style="margin-bottom:8px">'+st+'</p>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><label class="f">Date filed and paid<input type="date" id="filDate" value="'+esc(val)+'"'+(locked?' disabled':'')+'></label>'+
+    (locked?'<button class="btn" id="qUnlock"'+attrs+' type="button">🔓 Unlock '+(keys.length>1?'year':'quarter')+'</button>'
+      :'<button class="btn" id="filSave"'+attrs+' type="button">Save date</button><button class="btn primary" id="qLock"'+attrs+' type="button">🔒 Lock '+(keys.length>1?'the year':'this quarter')+'</button>')+'</div>'+
+    '<p class="muted" style="margin-top:8px">Locking keeps the filing date and also locks every receipt and sales invoice dated in '+(keys.length>1?'this year':'this quarter')+', so nothing changes after you file. You need your PIN to unlock.</p></div>';
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('#filSave,#qLock,#qUnlock');if(!b)return;
+  var form=b.dataset.form,fkey=b.dataset.fkey,keys=b.dataset.keys.split(','),date=($('#filDate')||{}).value||'';
+  if(b.id==='qUnlock'){
+    var chain=state.settings.pinHash?askExistingPin('Unlock '+(keys.length>1?'the year':qLabel(keys[0])),'Enter your PIN to unlock all entries in this period.'):Promise.resolve(true);
+    chain.then(function(ok){if(!ok)return;var n=unlockQuarters(keys);toast('Unlocked. '+n+' entr'+(n===1?'y':'ies')+' can be edited again.')});
+    return;
+  }
+  if(!validDate(date)){toast('Pick the date you filed and paid first.');return}
+  if(b.id==='filSave'){filings()[form+'|'+fkey]={date:date,at:Date.now(),by:(window.__rsbUser&&window.__rsbUser())||''};persist();mainView();toast('Filing date saved.');return}
+  var go=state.settings.pinHash?Promise.resolve(true):setNewPin('Create a PIN','You will need this PIN to unlock a locked period later. Keep it safe.');
+  go.then(function(ok){if(!ok)return;var n=lockQuarters(keys,date,form,fkey);toast('Locked. Filing date '+date+' saved, '+n+' entr'+(n===1?'y':'ies')+' locked.')});
 });
 
 /* ---------- boot ---------- */
@@ -2282,7 +2351,7 @@ function subscribe(){
   unsub=base.collection('receipts').onSnapshot(applyCloud,function(e){errMsg=dbErr(e);setStatus()});
   unsubSet=base.collection('meta').doc('settings').onSnapshot(function(d){
     setReady=true;
-    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||'',taxSize:v.taxSize||'small',vatCarry:(function(){try{return JSON.parse(v.vatCarry||'{}')||{}}catch(e){return {}}})()};lastSettings=JSON.stringify(state.settings);syncSettings()}
+    if(d.exists){var v=d.data()||{};state.settings={name:v.name||'',tin:v.tin||'',pinHash:v.pinHash||'',pinSalt:v.pinSalt||'',taxSize:v.taxSize||'small',filings:(function(){try{return JSON.parse(v.filings||'{}')||{}}catch(e){return {}}})(),qlocks:(function(){try{return JSON.parse(v.qlocks||'{}')||{}}catch(e){return {}}})(),vatCarry:(function(){try{return JSON.parse(v.vatCarry||'{}')||{}}catch(e){return {}}})()};lastSettings=JSON.stringify(state.settings);syncSettings()}
     else lastSettings='';
     persist();
   },function(){});
@@ -2319,7 +2388,7 @@ function pushDiff(){
   });
   Object.keys(lastPushed).forEach(function(id){if(!seen[id]){delete lastPushed[id];ops.push(['del',id])}});
   var base=db.collection('users').doc(user.uid);
-  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||'',vatCarry:JSON.stringify(state.settings.vatCarry||{}),taxSize:state.settings.taxSize||'small'}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
+  if(setReady){var sj=JSON.stringify(state.settings);if(sj!==lastSettings){lastSettings=sj;base.collection('meta').doc('settings').set({name:state.settings.name||'',tin:state.settings.tin||'',pinHash:state.settings.pinHash||'',pinSalt:state.settings.pinSalt||'',vatCarry:JSON.stringify(state.settings.vatCarry||{}),taxSize:state.settings.taxSize||'small',filings:JSON.stringify(state.settings.filings||{}),qlocks:JSON.stringify(state.settings.qlocks||{})}).catch(function(e){errMsg=dbErr(e);setStatus()})}}
   if(!ops.length)return;
   saveIds();
   for(var i=0;i<ops.length;i+=400){
